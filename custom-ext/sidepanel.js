@@ -1103,15 +1103,95 @@ const ACTION_ICONS = {
   update_plan: '📋', gif_capture: '🎬',
 };
 
-const TOOL_CATEGORY_TITLE = {
-  // mapping action verb groups → batch title hints
-  read: 'Reading',
-  interact: 'Interacting',
-  navigate: 'Navigating',
-  search: 'Searching',
-  capture: 'Capturing',
-  manage: 'Managing tabs',
+// Tool → category, for premium batch titles ("Searching web", "Reading page" …)
+const TOOL_CATEGORY = {
+  // read / extract
+  get_page: 'read', read_tab: 'read', page_summary: 'read', get_console: 'read',
+  dom_snapshot: 'read', get_value: 'read', get_attribute: 'read', get_text: 'read',
+  get_visible_text: 'read', get_page_structure: 'read', get_accessibility_tree: 'read',
+  extract_links: 'read', extract_table: 'read', extract_form_data: 'read',
+  extract_list: 'read', extract_metadata: 'read', extract_contacts: 'read',
+  extract_images: 'read', find_clickable: 'read', get_element_info: 'read',
+  // interact
+  click: 'interact', double_click: 'interact', triple_click: 'interact',
+  hover: 'interact', type: 'interact', key_press: 'interact', smart_click: 'interact',
+  smart_type: 'interact', select_option: 'interact', fill_form: 'interact',
+  drag_drop: 'interact', mouse_drag: 'interact', scroll: 'interact',
+  scroll_to: 'interact', scroll_until: 'interact',
+  // navigate
+  navigate: 'navigate', back: 'navigate', forward: 'navigate', reload: 'navigate',
+  click_and_read: 'navigate', navigate_and_read: 'navigate',
+  wait_for_navigation: 'navigate',
+  // search
+  web_search: 'search', find_element: 'search', find_by_text: 'search',
+  ai_find_element: 'search',
+  // capture
+  screenshot: 'capture', element_screenshot: 'capture', gif_capture: 'capture',
+  screenshot_snapshot: 'capture', screenshot_compare: 'capture',
+  ocr_image: 'capture', read_pdf: 'capture',
+  // tab/window
+  list_tabs: 'tabs', switch_tab: 'tabs', new_tab: 'tabs', close_tab: 'tabs',
+  duplicate_tab: 'tabs', list_windows: 'tabs', new_window: 'tabs',
+  focus_window: 'tabs', close_window: 'tabs', move_tab: 'tabs',
+  resize_window: 'tabs', set_zoom: 'tabs', get_zoom: 'tabs',
+  // ai
+  ai_summarize: 'ai', ai_describe_page: 'ai', ai_extract_data: 'ai',
+  // network / fetch
+  network_log: 'network', network_response: 'network', fetch_url: 'network',
+  download_file: 'network',
+  // storage / db
+  read_storage: 'storage', write_storage: 'storage', read_cookies: 'storage',
+  db_set: 'storage', db_get: 'storage', db_query: 'storage', db_delete: 'storage',
+  workspace_write: 'storage', workspace_read: 'storage', workspace_delete: 'storage',
+  // memory
+  remember: 'memory', forget: 'memory', recall_memories: 'memory',
+  search_kb: 'memory', list_kb: 'memory',
+  scratchpad_set: 'memory', scratchpad_get: 'memory', scratchpad_list: 'memory',
+  note_save: 'memory', note_get: 'memory', note_list: 'memory', note_delete: 'memory',
+  // wait
+  wait: 'wait', wait_for: 'wait', wait_for_idle: 'wait', wait_for_element_state: 'wait',
+  // workflow
+  batch: 'workflow', conditional_step: 'workflow', loop_until: 'workflow',
+  retry_with_backoff: 'workflow', update_plan: 'workflow',
+  // system
+  health_check: 'system', set_readonly: 'system',
+  clipboard_read: 'system', clipboard_write: 'system',
+  execute_js: 'system', save_text: 'system', upload_image: 'system',
 };
+
+const CATEGORY_LABEL = {
+  read:     { running: 'Reading',          done: 'Read'          },
+  interact: { running: 'Interacting',      done: 'Interacted'    },
+  navigate: { running: 'Navigating',       done: 'Navigated'     },
+  search:   { running: 'Searching',        done: 'Searched'      },
+  capture:  { running: 'Capturing',        done: 'Captured'      },
+  tabs:     { running: 'Managing tabs',    done: 'Managed tabs'  },
+  ai:       { running: 'Asking AI',        done: 'AI response'   },
+  network:  { running: 'Fetching',         done: 'Fetched'       },
+  storage:  { running: 'Storing data',     done: 'Stored'        },
+  memory:   { running: 'Recalling memory', done: 'Memory'        },
+  wait:     { running: 'Waiting',          done: 'Waited'        },
+  workflow: { running: 'Running workflow', done: 'Workflow'      },
+  system:   { running: 'Running',          done: 'Done'          },
+};
+
+function _dominantCategory(batch) {
+  if (!batch) return null;
+  const items = batch.querySelectorAll('.activity-item');
+  if (!items.length) return null;
+  const counts = {};
+  for (const it of items) {
+    const t = it.dataset.tool || '';
+    const cat = TOOL_CATEGORY[t] || 'system';
+    counts[cat] = (counts[cat] || 0) + 1;
+  }
+  let best = null, max = 0;
+  for (const [cat, n] of Object.entries(counts)) {
+    if (n > max) { max = n; best = cat; }
+  }
+  const distinctCats = Object.keys(counts).length;
+  return { cat: best, max, distinct: distinctCats, total: items.length };
+}
 
 // Active batch container (one per agent iteration)
 let _currentBatch = null;
@@ -1179,22 +1259,31 @@ function batchUpdateProgress(batch) {
   const progEl = batch.querySelector('.batch-progress');
   if (progEl) progEl.textContent = `${done}/${total}`;
   if (titleEl) {
+    const items = batch.querySelectorAll('.activity-item');
+    const dom = _dominantCategory(batch);
+    const running = batch.querySelector('.activity-item.running .action-text');
+
     if (done < total) {
-      const items = batch.querySelectorAll('.activity-item');
-      const running = batch.querySelector('.activity-item.running .action-text');
+      // RUNNING — prefer running step's verb if it's the only/last one
       if (running && items.length === 1) {
         titleEl.textContent = running.textContent;
-      } else if (total > 1) {
-        titleEl.textContent = 'Batch';
+      } else if (dom && dom.distinct === 1) {
+        titleEl.textContent = (CATEGORY_LABEL[dom.cat] || CATEGORY_LABEL.system).running;
       } else if (running) {
         titleEl.textContent = running.textContent;
+      } else if (dom) {
+        titleEl.textContent = (CATEGORY_LABEL[dom.cat] || CATEGORY_LABEL.system).running;
+      } else {
+        titleEl.textContent = 'Working';
       }
     } else {
-      // All done — pick descriptive name
-      const items = batch.querySelectorAll('.activity-item');
+      // DONE — descriptive done state
       if (items.length === 1) {
         const txt = items[0].querySelector('.action-text')?.textContent || 'Done';
         titleEl.textContent = txt;
+      } else if (dom && dom.distinct === 1) {
+        const lbl = (CATEGORY_LABEL[dom.cat] || CATEGORY_LABEL.system).done;
+        titleEl.textContent = `${lbl} · ${total} step${total > 1 ? 's' : ''}`;
       } else {
         titleEl.textContent = `${total} action${total > 1 ? 's' : ''}`;
       }
@@ -1236,6 +1325,7 @@ function createActivityItem(toolName) {
 
   const item = document.createElement('div');
   item.className = 'activity-item running pending';
+  item.dataset.tool = toolName;
 
   const icon = document.createElement('span');
   icon.className = 'action-icon';
