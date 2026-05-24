@@ -4851,10 +4851,12 @@ async function tool_ocrImage({ tab_id, selector, data_url, prompt }, ctx) {
         'x-api-key': settings.apiToken,
         'Authorization': `Bearer ${settings.apiToken}`,
         'anthropic-version': '2023-06-01',
+        'Accept': 'application/json',
       },
       body: JSON.stringify({
         model,
         max_tokens: 2000,
+        stream: false,
         messages: [{
           role: 'user',
           content: [
@@ -4868,8 +4870,7 @@ async function tool_ocrImage({ tab_id, selector, data_url, prompt }, ctx) {
       const txt = await resp.text();
       return { is_error: true, content: `OCR HTTP ${resp.status}: ${txt.slice(0, 300)}` };
     }
-    const json = await resp.json();
-    const text = (json.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+    const text = await _parseClaudeResponse(resp);
     return { content: text || '(no text recognized)' };
   } catch (e) {
     return { is_error: true, content: `OCR error: ${e.message}` };
@@ -6631,23 +6632,12 @@ async function tool_aiSummarize({ tab_id, length = 'medium' }) {
   if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
   const text = await execIsolated(tab.id, () => (document.body?.innerText || '').slice(0, 30000));
   if (!text) return { is_error: true, content: 'No text to summarize.' };
-  const { settings } = await chrome.storage.local.get(['settings']);
-  if (!settings?.apiToken) return { is_error: true, content: 'No API key set.' };
-  const baseUrl = (settings.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
   const lengthInstr = { short: 'in 1 paragraph', medium: 'in 3-4 paragraphs', long: 'with full breakdown including all main sections' }[length] || 'in 3-4 paragraphs';
   try {
-    const resp = await fetch(`${baseUrl}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': settings.apiToken, 'Authorization': `Bearer ${settings.apiToken}`, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: settings.defaultModel || 'claude-sonnet-4-5',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: `Summarize this page ${lengthInstr}. Match the language of the source text.\n\n---\n${text}` }],
-      }),
-    });
-    if (!resp.ok) return { is_error: true, content: `Summarize HTTP ${resp.status}` };
-    const j = await resp.json();
-    const out = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+    const out = await _callClaude(
+      [{ role: 'user', content: `Summarize this page ${lengthInstr}. Match the language of the source text.\n\n---\n${text}` }],
+      2000
+    );
     return { content: out || '(empty)' };
   } catch (e) {
     return { is_error: true, content: `Summarize error: ${e.message}` };
@@ -6669,16 +6659,55 @@ async function _callClaude(messages, maxTokens = 2000) {
       'x-api-key': settings.apiToken,
       'Authorization': `Bearer ${settings.apiToken}`,
       'anthropic-version': '2023-06-01',
+      'Accept': 'application/json',
     },
     body: JSON.stringify({
       model: settings.defaultModel || 'claude-sonnet-4-5',
       max_tokens: maxTokens,
       messages,
+      stream: false,
     }),
   });
   if (!resp.ok) throw new Error(`Claude HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-  const j = await resp.json();
-  return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+  return await _parseClaudeResponse(resp);
+}
+
+// Some proxies (and Anthropic itself when stream=true is forced) return SSE
+// even on non-streaming requests. This parser handles both: real JSON, OR
+// "event:/data:" SSE chunks that we accumulate into a final message.
+async function _parseClaudeResponse(resp) {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  const text = await resp.text();
+  // Try JSON first
+  if (ct.includes('json') || text.trim().startsWith('{')) {
+    try {
+      const j = JSON.parse(text);
+      return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+    } catch {
+      // fall through to SSE parser
+    }
+  }
+  // SSE format: event: foo\ndata: {...}\n\n
+  // Re-assemble text deltas from content_block_delta events
+  let buf = '';
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const payload = line.slice(6).trim();
+    if (!payload || payload === '[DONE]') continue;
+    let ev;
+    try { ev = JSON.parse(payload); } catch { continue; }
+    if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+      buf += ev.delta.text || '';
+    } else if (ev.type === 'message' && Array.isArray(ev.content)) {
+      // Some servers send the entire message as a single SSE event
+      buf += ev.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+    } else if (ev.content && Array.isArray(ev.content)) {
+      buf += ev.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+    }
+  }
+  if (buf.trim()) return buf.trim();
+  // Last resort: dump the raw response so error message is informative
+  throw new Error(`Could not parse Claude response. First 200 chars: ${text.slice(0, 200)}`);
 }
 
 // ---- ai_describe_page -----------------------------------------------
