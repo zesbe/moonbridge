@@ -281,17 +281,65 @@ function renderHistory(filter = '') {
         title.appendChild(badge);
       }
       const span = document.createElement('span');
+      span.className = 'history-item-text';
       span.textContent = c.title || 'Untitled';
       title.appendChild(span);
       const meta = document.createElement('div');
       meta.className = 'history-item-meta';
       meta.innerHTML = `<span>${formatDate(c.updatedAt)}</span><span>${countTurns(c.conversation)} turns</span>`;
+
+      // Inline rename action (hover to reveal)
+      const actions = document.createElement('div');
+      actions.className = 'history-item-actions';
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'history-item-action';
+      renameBtn.title = 'Rename';
+      renameBtn.textContent = '✎';
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startRenameChat(c, span);
+      });
+      actions.appendChild(renameBtn);
+
       row.appendChild(title);
       row.appendChild(meta);
+      row.appendChild(actions);
       row.addEventListener('click', () => loadChat(c));
       historyList.appendChild(row);
     }
   }
+}
+
+function startRenameChat(chat, labelEl) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'history-rename-input';
+  input.value = chat.title || '';
+  input.maxLength = 80;
+  labelEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const finish = async (commit) => {
+    const newTitle = input.value.trim();
+    if (commit && newTitle && newTitle !== chat.title) {
+      chat.title = newTitle;
+      chat.updatedAt = Date.now();
+      const idx = savedChats.findIndex((x) => x.id === chat.id);
+      if (idx >= 0) {
+        savedChats[idx] = chat;
+        await persistChats();
+      }
+    }
+    renderHistory(historySearch.value || '');
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
 }
 
 function formatDate(ts) {
@@ -778,6 +826,27 @@ function appendError(text) {
   div.textContent = text;
   messagesEl.appendChild(div);
   scrollToBottom();
+}
+
+// Single live-streaming thinking block per turn (not per iteration)
+function createThinkingStream() {
+  ensureNoEmpty();
+  const wrap = document.createElement('div');
+  wrap.className = 'thinking-block thinking-stream open';
+  const toggle = document.createElement('span');
+  toggle.className = 'thinking-toggle';
+  toggle.textContent = '▾ Thinking';
+  const body = document.createElement('div');
+  body.className = 'thinking-body';
+  toggle.addEventListener('click', () => {
+    wrap.classList.toggle('open');
+    toggle.textContent = wrap.classList.contains('open') ? '▾ Thinking' : '▸ Thinking';
+  });
+  wrap.appendChild(toggle);
+  wrap.appendChild(body);
+  messagesEl.appendChild(wrap);
+  scrollToBottom();
+  return { wrap, body, toggle };
 }
 
 function appendIterMarker(n) {
@@ -1369,6 +1438,7 @@ async function runAgentTurn(continuingExisting = false) {
   let assistantUI = null;
   let textBuf = '';
   let thinkBuf = '';
+  let thinkStream = null;  // single persistent thinking block per turn
   const toolCards = new Map();
   let lastTextBufRef = { value: '' };
   let lastAssistantWrap = null;
@@ -1395,7 +1465,7 @@ async function runAgentTurn(continuingExisting = false) {
         startNewBatch();
         assistantUI = null;
         textBuf = '';
-        thinkBuf = '';
+        // NOTE: don't reset thinkBuf or thinkStream — single live stream per turn
         lastTextBufRef = { value: '' };
         continue;
       }
@@ -1406,10 +1476,11 @@ async function runAgentTurn(continuingExisting = false) {
         renderMarkdown(textBuf, assistantUI.body);
         scrollToBottom();
       } else if (ev.kind === 'thinking_delta') {
-        if (!assistantUI) { assistantUI = createAssistantMessage(); lastAssistantWrap = assistantUI.wrap; }
+        if (!thinkStream) thinkStream = createThinkingStream();
         thinkBuf += ev.text;
-        assistantUI.thinkBlock.classList.remove('hidden');
-        assistantUI.thinkBody.textContent = thinkBuf;
+        thinkStream.body.textContent = thinkBuf;
+        // auto-scroll thinking body to bottom (live stream feel)
+        thinkStream.body.scrollTop = thinkStream.body.scrollHeight;
         scrollToBottom();
       } else if (ev.kind === 'tool_call_start') {
         hideStatus();
@@ -1437,6 +1508,11 @@ async function runAgentTurn(continuingExisting = false) {
     if (assistantUI && lastTextBufRef.value) {
       const captured = lastTextBufRef.value;
       attachAssistantActions(assistantUI.wrap, () => captured);
+    }
+    // Auto-collapse thinking stream when turn finishes
+    if (thinkStream && thinkBuf) {
+      thinkStream.wrap.classList.remove('open');
+      thinkStream.toggle.textContent = '▸ Thinking';
     }
   } catch (e) {
     appendError(`Unexpected: ${e.message}`);

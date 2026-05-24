@@ -344,6 +344,7 @@ body {
   gap: 2px;
   transition: background var(--transition);
   border: 1px solid transparent;
+  position: relative;
 }
 .history-item:hover { background: var(--bg-hover); }
 .history-item.active { background: var(--accent-soft); border-color: rgba(217, 119, 87, 0.16); }
@@ -358,6 +359,7 @@ body {
   align-items: center;
   gap: 6px;
   letter-spacing: -0.005em;
+  padding-right: 28px;
 }
 .history-item-title .badge {
   font-size: 9.5px;
@@ -370,11 +372,51 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
+.history-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-item-meta {
   font-size: 11px;
   color: var(--text-dim);
   display: flex;
   justify-content: space-between;
+}
+.history-item-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.history-item:hover .history-item-actions { opacity: 1; }
+.history-item-action {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1;
+  transition: all var(--transition);
+}
+.history-item-action:hover {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--text);
+}
+.history-rename-input {
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 2px 6px;
+  outline: none;
+  width: 100%;
+  letter-spacing: -0.005em;
 }
 .history-empty {
   text-align: center;
@@ -767,6 +809,23 @@ body {
 .thinking-body { display: none; margin-top: 4px; max-height: 240px; overflow-y: auto; }
 .thinking-block.open .thinking-body { display: block; }
 .thinking-block.hidden { display: none; }
+
+/* Live thinking stream — single block per turn, persistent until response completes */
+.thinking-stream {
+  margin-left: 33px;
+  margin-right: 12px;
+  max-width: none;
+  border-color: rgba(217, 119, 87, 0.18);
+  background: rgba(217, 119, 87, 0.04);
+}
+.thinking-stream .thinking-toggle {
+  color: var(--accent);
+  opacity: 0.85;
+}
+.thinking-stream.open .thinking-body {
+  max-height: 320px;
+  scroll-behavior: smooth;
+}
 
 .msg.assistant .msg-actions {
   margin-left: 33px;
