@@ -2738,5 +2738,368 @@
         }
       }
     }
+  },
+  {
+    "name": "ai_describe_page",
+    "description": "Take a screenshot and use vision to describe what is ON the page (including canvas, charts, images, non-DOM content). Use when DOM extraction misses visual content.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "focus": {
+          "type": "string",
+          "description": "What to focus the description on (e.g. \"charts and graphs only\")."
+        }
+      }
+    }
+  },
+  {
+    "name": "ai_find_element",
+    "description": "Find an element on the page by natural-language intent. Returns selector candidates ranked by AI. Use when smart_click finds wrong target.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "e.g. \"the price of the first product\""
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "intent"
+      ]
+    }
+  },
+  {
+    "name": "ai_extract_data",
+    "description": "Extract structured data from page using AI + schema. Provide description + JSON schema, AI returns matching structured output. Game changer for scraping.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "What to extract, e.g. \"all products with name, price, rating\"."
+        },
+        "schema": {
+          "type": "object",
+          "description": "Target shape (JSON schema-ish), e.g. {products: [{name: \"string\", price: \"number\"}]}."
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Source text limit (default 20000)."
+        }
+      },
+      "required": [
+        "description"
+      ]
+    }
+  },
+  {
+    "name": "get_accessibility_tree",
+    "description": "Get the full ARIA accessibility tree via CDP. Returns semantic structure with roles, labels, states. Better than DOM for AI navigation.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Default 200."
+        }
+      }
+    }
+  },
+  {
+    "name": "get_page_structure",
+    "description": "Hierarchical page outline: header / nav / main / sections / footer. Identifies semantic landmarks even if site uses divs instead of semantic HTML.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "monitor_url",
+    "description": "Watch a tab for URL changes matching a pattern. Returns when match happens or timeout. Useful for OAuth callback waits.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "URL substring to wait for, e.g. \"/callback\"."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Default 30000."
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "monitor_console",
+    "description": "Capture console output (log, warn, error) for a window of time, then return collected entries. Optional level filter.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "all",
+            "log",
+            "warn",
+            "error"
+          ],
+          "description": "Default error."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "Capture window (default 5000)."
+        }
+      }
+    }
+  },
+  {
+    "name": "monitor_network",
+    "description": "Capture network activity for a duration, return summary. Filters by URL substring/method.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "url_contains": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "Default 5000."
+        }
+      }
+    }
+  },
+  {
+    "name": "conditional_step",
+    "description": "If-then-else workflow: check a condition (selector exists, URL matches, or text present), then run one branch.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "if": {
+          "type": "object",
+          "description": "Condition: {selector, exists?: true|false} OR {url_contains: \"...\"} OR {text_contains: \"...\"}"
+        },
+        "then": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "else": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "if"
+      ]
+    }
+  },
+  {
+    "name": "loop_until",
+    "description": "Repeat a sequence of tool calls until a condition becomes true (or max_iterations hit). Useful for \"scroll until X appears\" or \"click next until Y\".",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "until": {
+          "type": "object",
+          "description": "Stop condition: {selector, exists}, {url_contains}, or {text_contains}."
+        },
+        "max_iterations": {
+          "type": "integer",
+          "description": "Default 10."
+        },
+        "delay_ms": {
+          "type": "integer",
+          "description": "Pause between iterations (default 500)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "steps",
+        "until"
+      ]
+    }
+  },
+  {
+    "name": "download_all_images",
+    "description": "Bulk download all images on the page (or matching selector) to Downloads folder.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "selector": {
+          "type": "string",
+          "description": "Default: img elements page-wide."
+        },
+        "folder": {
+          "type": "string",
+          "description": "Subfolder name in Downloads."
+        },
+        "min_size": {
+          "type": "integer",
+          "description": "Min width/height (default 100)."
+        }
+      }
+    }
+  },
+  {
+    "name": "db_set",
+    "description": "Insert/update a record in a virtual table (key-value DB on top of workspace). Schema-less.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name, e.g. \"leads\"."
+        },
+        "id": {
+          "type": "string",
+          "description": "Record id (any unique string)."
+        },
+        "data": {
+          "type": "object",
+          "description": "Record fields."
+        }
+      },
+      "required": [
+        "table",
+        "id",
+        "data"
+      ]
+    }
+  },
+  {
+    "name": "db_get",
+    "description": "Fetch a single record by id, or all records in a table.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "If omitted, returns all rows."
+        }
+      },
+      "required": [
+        "table"
+      ]
+    }
+  },
+  {
+    "name": "db_query",
+    "description": "Filter records: where = {field: value} or {field: {op: \"contains\", value: \"...\"}}.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string"
+        },
+        "where": {
+          "type": "object",
+          "description": "Filter conditions."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 100."
+        }
+      },
+      "required": [
+        "table"
+      ]
+    }
+  },
+  {
+    "name": "db_delete",
+    "description": "Delete record by id, or all matching where clause.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "where": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "table"
+      ]
+    }
   }
 ]

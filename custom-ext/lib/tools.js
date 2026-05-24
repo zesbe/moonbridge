@@ -1660,6 +1660,210 @@ export const ALL_TOOLS = [
       },
     },
   },
+
+  // ===== Round 5 — Final wishlist items =====
+  {
+    name: 'ai_describe_page',
+    description: 'Take a screenshot and use vision to describe what is ON the page (including canvas, charts, images, non-DOM content). Use when DOM extraction misses visual content.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        focus: { type: 'string', description: 'What to focus the description on (e.g. "charts and graphs only").' },
+      },
+    },
+  },
+  {
+    name: 'ai_find_element',
+    description: 'Find an element on the page by natural-language intent. Returns selector candidates ranked by AI. Use when smart_click finds wrong target.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        intent: { type: 'string', description: 'e.g. "the price of the first product"' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['intent'],
+    },
+  },
+  {
+    name: 'ai_extract_data',
+    description: 'Extract structured data from page using AI + schema. Provide description + JSON schema, AI returns matching structured output. Game changer for scraping.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'What to extract, e.g. "all products with name, price, rating".' },
+        schema: { type: 'object', description: 'Target shape (JSON schema-ish), e.g. {products: [{name: "string", price: "number"}]}.' },
+        tab_id: { type: 'integer' },
+        max_chars: { type: 'integer', description: 'Source text limit (default 20000).' },
+      },
+      required: ['description'],
+    },
+  },
+  {
+    name: 'get_accessibility_tree',
+    description: 'Get the full ARIA accessibility tree via CDP. Returns semantic structure with roles, labels, states. Better than DOM for AI navigation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        max_nodes: { type: 'integer', description: 'Default 200.' },
+      },
+    },
+  },
+  {
+    name: 'get_page_structure',
+    description: 'Hierarchical page outline: header / nav / main / sections / footer. Identifies semantic landmarks even if site uses divs instead of semantic HTML.',
+    input_schema: {
+      type: 'object',
+      properties: { tab_id: { type: 'integer' } },
+    },
+  },
+  {
+    name: 'monitor_url',
+    description: 'Watch a tab for URL changes matching a pattern. Returns when match happens or timeout. Useful for OAuth callback waits.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        pattern: { type: 'string', description: 'URL substring to wait for, e.g. "/callback".' },
+        timeout_ms: { type: 'integer', description: 'Default 30000.' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'monitor_console',
+    description: 'Capture console output (log, warn, error) for a window of time, then return collected entries. Optional level filter.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        level: { type: 'string', enum: ['all', 'log', 'warn', 'error'], description: 'Default error.' },
+        duration_ms: { type: 'integer', description: 'Capture window (default 5000).' },
+      },
+    },
+  },
+  {
+    name: 'monitor_network',
+    description: 'Capture network activity for a duration, return summary. Filters by URL substring/method.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        url_contains: { type: 'string' },
+        method: { type: 'string' },
+        duration_ms: { type: 'integer', description: 'Default 5000.' },
+      },
+    },
+  },
+  {
+    name: 'conditional_step',
+    description: 'If-then-else workflow: check a condition (selector exists, URL matches, or text present), then run one branch.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        if: {
+          type: 'object',
+          description: 'Condition: {selector, exists?: true|false} OR {url_contains: "..."} OR {text_contains: "..."}',
+        },
+        then: {
+          type: 'array',
+          items: { type: 'object', properties: { tool: { type: 'string' }, input: { type: 'object' } } },
+        },
+        else: {
+          type: 'array',
+          items: { type: 'object', properties: { tool: { type: 'string' }, input: { type: 'object' } } },
+        },
+        tab_id: { type: 'integer' },
+      },
+      required: ['if'],
+    },
+  },
+  {
+    name: 'loop_until',
+    description: 'Repeat a sequence of tool calls until a condition becomes true (or max_iterations hit). Useful for "scroll until X appears" or "click next until Y".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: { type: 'object', properties: { tool: { type: 'string' }, input: { type: 'object' } } },
+        },
+        until: {
+          type: 'object',
+          description: 'Stop condition: {selector, exists}, {url_contains}, or {text_contains}.',
+        },
+        max_iterations: { type: 'integer', description: 'Default 10.' },
+        delay_ms: { type: 'integer', description: 'Pause between iterations (default 500).' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['steps', 'until'],
+    },
+  },
+  {
+    name: 'download_all_images',
+    description: 'Bulk download all images on the page (or matching selector) to Downloads folder.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        selector: { type: 'string', description: 'Default: img elements page-wide.' },
+        folder: { type: 'string', description: 'Subfolder name in Downloads.' },
+        min_size: { type: 'integer', description: 'Min width/height (default 100).' },
+      },
+    },
+  },
+  {
+    name: 'db_set',
+    description: 'Insert/update a record in a virtual table (key-value DB on top of workspace). Schema-less.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        table: { type: 'string', description: 'Table name, e.g. "leads".' },
+        id: { type: 'string', description: 'Record id (any unique string).' },
+        data: { type: 'object', description: 'Record fields.' },
+      },
+      required: ['table', 'id', 'data'],
+    },
+  },
+  {
+    name: 'db_get',
+    description: 'Fetch a single record by id, or all records in a table.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        table: { type: 'string' },
+        id: { type: 'string', description: 'If omitted, returns all rows.' },
+      },
+      required: ['table'],
+    },
+  },
+  {
+    name: 'db_query',
+    description: 'Filter records: where = {field: value} or {field: {op: "contains", value: "..."}}.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        table: { type: 'string' },
+        where: { type: 'object', description: 'Filter conditions.' },
+        limit: { type: 'integer', description: 'Default 100.' },
+      },
+      required: ['table'],
+    },
+  },
+  {
+    name: 'db_delete',
+    description: 'Delete record by id, or all matching where clause.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        table: { type: 'string' },
+        id: { type: 'string' },
+        where: { type: 'object' },
+      },
+      required: ['table'],
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1852,6 +2056,21 @@ export async function executeTool(name, input, ctx = {}) {
       case 'auth_list':        return wrap(await tool_authList());
       case 'export_data':      return wrap(await tool_exportData(input || {}));
       case 'ai_summarize':     return wrap(await tool_aiSummarize(input || {}));
+      case 'ai_describe_page': return wrap(await tool_aiDescribePage(input || {}));
+      case 'ai_find_element':  return wrap(await tool_aiFindElement(input || {}));
+      case 'ai_extract_data':  return wrap(await tool_aiExtractData(input || {}));
+      case 'get_accessibility_tree': return wrap(await tool_getA11yTree(input || {}));
+      case 'get_page_structure': return wrap(await tool_getPageStructure(input || {}));
+      case 'monitor_url':      return wrap(await tool_monitorUrl(input || {}));
+      case 'monitor_console':  return wrap(await tool_monitorConsole(input || {}));
+      case 'monitor_network':  return wrap(await tool_monitorNetwork(input || {}));
+      case 'conditional_step': return wrap(await tool_conditionalStep(input || {}, ctx));
+      case 'loop_until':       return wrap(await tool_loopUntil(input || {}, ctx));
+      case 'download_all_images': return wrap(await tool_downloadAllImages(input || {}));
+      case 'db_set':           return wrap(await tool_dbSet(input || {}));
+      case 'db_get':           return wrap(await tool_dbGet(input || {}));
+      case 'db_query':         return wrap(await tool_dbQuery(input || {}));
+      case 'db_delete':        return wrap(await tool_dbDelete(input || {}));
       case 'get_page':       return wrap(await tool_getPage(input || {}));
       case 'read_tab':       return wrap(await tool_getPage({ ...input, tab_id: input?.tab_id }));
       case 'find_element':   return wrap(await tool_findElement(input || {}));
@@ -6433,4 +6652,366 @@ async function tool_aiSummarize({ tab_id, length = 'medium' }) {
   } catch (e) {
     return { is_error: true, content: `Summarize error: ${e.message}` };
   }
+}
+
+// =====================================================================
+// ROUND 5 — FINAL WISHLIST IMPLEMENTATIONS
+// =====================================================================
+
+async function _callClaude(messages, maxTokens = 2000) {
+  const { settings } = await chrome.storage.local.get(['settings']);
+  if (!settings?.apiToken) throw new Error('No API key set.');
+  const baseUrl = (settings.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
+  const resp = await fetch(`${baseUrl}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': settings.apiToken,
+      'Authorization': `Bearer ${settings.apiToken}`,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: settings.defaultModel || 'claude-sonnet-4-5',
+      max_tokens: maxTokens,
+      messages,
+    }),
+  });
+  if (!resp.ok) throw new Error(`Claude HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  const j = await resp.json();
+  return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+}
+
+// ---- ai_describe_page -----------------------------------------------
+async function tool_aiDescribePage({ tab_id, focus }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  let dataUrl;
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } catch (e) { return { is_error: true, content: `Screenshot failed: ${e.message}` }; }
+  const m = dataUrl.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+  if (!m) return { is_error: true, content: 'Bad screenshot data URL.' };
+  const prompt = focus
+    ? `Describe what is on this page, focusing on: ${focus}. Be concise but precise.`
+    : `Describe what is on this page including non-text content (charts, images, canvas drawings, video frames). Be concise but precise.`;
+  try {
+    const text = await _callClaude([{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+        { type: 'text', text: prompt },
+      ],
+    }], 2500);
+    return { content: text || '(empty)' };
+  } catch (e) { return { is_error: true, content: e.message }; }
+}
+
+// ---- ai_find_element ------------------------------------------------
+async function tool_aiFindElement({ intent, tab_id }) {
+  if (!intent) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'intent required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const candidates = await execIsolated(tab.id, () => {
+    window.__claudeRefs__ = window.__claudeRefs__ || {};
+    let id = Object.keys(window.__claudeRefs__).length;
+    const items = [];
+    for (const el of document.querySelectorAll('a[href], button, input:not([type=hidden]), [role=button], [role=link], [data-testid], [aria-label]')) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      id++;
+      window.__claudeRefs__[id] = el;
+      items.push({
+        ref: id,
+        tag: el.tagName.toLowerCase(),
+        label: ((el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 80) || '').replace(/\s+/g, ' ').trim(),
+        attrs: { id: el.id, name: el.name, type: el.type, role: el.getAttribute('role'), 'aria-label': el.getAttribute('aria-label'), 'data-testid': el.getAttribute('data-testid') },
+      });
+      if (items.length >= 80) break;
+    }
+    return items;
+  });
+  try {
+    const text = await _callClaude([{
+      role: 'user',
+      content: `User wants to find: "${intent}"\n\nCandidates on page (with #ref-N selectors):\n${JSON.stringify(candidates, null, 2)}\n\nReturn ONLY the JSON: {"best_match": "#ref-N", "confidence": 0-100, "reasoning": "..."}. If no good match, set best_match to null.`,
+    }]);
+    const j = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    return { content: `Best: ${j.best_match || 'none'} (confidence: ${j.confidence || 0}%)\nReason: ${j.reasoning || ''}` };
+  } catch (e) { return { is_error: true, content: e.message }; }
+}
+
+// ---- ai_extract_data ------------------------------------------------
+async function tool_aiExtractData({ description, schema, tab_id, max_chars = 20000 }) {
+  if (!description) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'description required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const text = await execIsolated(tab.id, (max) => (document.body?.innerText || '').slice(0, max), [max_chars]);
+  if (!text) return { is_error: true, content: 'No text on page.' };
+  try {
+    const prompt = `Extract: ${description}\n${schema ? 'Target schema: ' + JSON.stringify(schema) + '\n' : ''}From this page text:\n---\n${text}\n---\n\nReturn ONLY valid JSON matching the schema. No markdown fences, no explanation.`;
+    const out = await _callClaude([{ role: 'user', content: prompt }], 3000);
+    const json = out.match(/[\[\{][\s\S]*[\]\}]/)?.[0] || out;
+    JSON.parse(json); // validate
+    return { content: '```json\n' + json + '\n```' };
+  } catch (e) { return { is_error: true, content: `Extract failed: ${e.message}` }; }
+}
+
+// ---- get_accessibility_tree -----------------------------------------
+async function tool_getA11yTree({ tab_id, max_nodes = 200 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: e.message }; }
+  try {
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Accessibility.enable');
+    const r = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Accessibility.getFullAXTree');
+    const nodes = (r.nodes || []).slice(0, max_nodes).map(n => ({
+      role: n.role?.value, name: n.name?.value,
+      value: n.value?.value, description: n.description?.value,
+      ignored: n.ignored,
+    })).filter(n => n.role || n.name);
+    return { content: `${nodes.length} a11y nodes:\n\`\`\`json\n${JSON.stringify(nodes, null, 2)}\n\`\`\`` };
+  } catch (e) { return { is_error: true, content: e.message }; }
+  finally { if (attached) { try { await chrome.debugger.detach({ tabId: tab.id }); } catch {} } }
+}
+
+// ---- get_page_structure ---------------------------------------------
+async function tool_getPageStructure({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, () => {
+    const summarize = (el) => el ? ((el.innerText || '').slice(0, 100).replace(/\s+/g, ' ').trim()) : null;
+    const findLandmark = (selectors) => { for (const s of selectors) { const el = document.querySelector(s); if (el) return el; } return null; };
+    const header = findLandmark(['header', '[role=banner]', '.header', '#header']);
+    const nav = findLandmark(['nav', '[role=navigation]', '.nav', '#nav']);
+    const main = findLandmark(['main', '[role=main]', '.main', '#main', 'article']);
+    const footer = findLandmark(['footer', '[role=contentinfo]', '.footer', '#footer']);
+    const sections = main ? [...main.querySelectorAll('section, article, h1, h2')].slice(0, 20).map(s => ({
+      tag: s.tagName.toLowerCase(),
+      heading: (s.querySelector('h1,h2,h3')?.innerText || s.innerText || '').slice(0, 80).trim(),
+    })) : [];
+    return {
+      title: document.title,
+      url: location.href,
+      header: summarize(header),
+      nav: summarize(nav),
+      main_sections: sections,
+      footer: summarize(footer),
+      headings: [...document.querySelectorAll('h1, h2, h3')].slice(0, 30).map(h => ({ level: h.tagName, text: (h.innerText || '').slice(0, 100).trim() })),
+    };
+  });
+  return { content: '```json\n' + JSON.stringify(r, null, 2) + '\n```' };
+}
+
+// ---- monitor_url ----------------------------------------------------
+async function tool_monitorUrl({ tab_id, pattern, timeout_ms = 30000 }) {
+  if (!pattern) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'pattern required.' };
+  const tab = await resolveTab(tab_id);
+  const start = Date.now();
+  while (Date.now() - start < timeout_ms) {
+    await new Promise(r => setTimeout(r, 250));
+    const cur = await chrome.tabs.get(tab.id);
+    if (cur.url && cur.url.includes(pattern)) return { content: `✓ URL matched after ${Date.now() - start}ms: ${cur.url}` };
+  }
+  return { is_error: true, error_code: ERR_CODES.TIMEOUT, content: `URL did not match "${pattern}" within ${timeout_ms}ms.` };
+}
+
+// ---- monitor_console ------------------------------------------------
+async function tool_monitorConsole({ tab_id, level = 'error', duration_ms = 5000 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: e.message }; }
+  const logs = [];
+  const handler = (src, m, p) => {
+    if (src.tabId !== tab.id) return;
+    if (m === 'Runtime.consoleAPICalled') {
+      if (level === 'all' || p.type === level) {
+        logs.push({ type: p.type, args: (p.args || []).map(a => a.value ?? a.description ?? '').join(' '), ts: p.timestamp });
+      }
+    }
+  };
+  chrome.debugger.onEvent.addListener(handler);
+  try { await chrome.debugger.sendCommand({ tabId: tab.id }, 'Runtime.enable'); } catch {}
+  await new Promise(r => setTimeout(r, duration_ms));
+  chrome.debugger.onEvent.removeListener(handler);
+  if (attached) { try { await chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+  if (!logs.length) return { content: `No ${level} entries in ${duration_ms}ms.` };
+  const lines = [`Captured ${logs.length} ${level} entries:`];
+  for (const l of logs.slice(0, 50)) lines.push(`  [${l.type}] ${l.args.slice(0, 200)}`);
+  return { content: lines.join('\n') };
+}
+
+// ---- monitor_network ------------------------------------------------
+async function tool_monitorNetwork({ tab_id, url_contains, method, duration_ms = 5000 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: e.message }; }
+  const requests = new Map();
+  const handler = (src, m, p) => {
+    if (src.tabId !== tab.id) return;
+    if (m === 'Network.requestWillBeSent') {
+      if (url_contains && !p.request.url.includes(url_contains)) return;
+      if (method && p.request.method !== method) return;
+      requests.set(p.requestId, { url: p.request.url, method: p.request.method, ts: p.timestamp, status: 'pending' });
+    }
+    if (m === 'Network.responseReceived' && requests.has(p.requestId)) {
+      const r = requests.get(p.requestId);
+      r.status = p.response.status; r.mime = p.response.mimeType;
+    }
+  };
+  chrome.debugger.onEvent.addListener(handler);
+  try { await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable'); } catch {}
+  await new Promise(r => setTimeout(r, duration_ms));
+  chrome.debugger.onEvent.removeListener(handler);
+  if (attached) { try { await chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+  const arr = [...requests.values()];
+  if (!arr.length) return { content: `No matching requests in ${duration_ms}ms.` };
+  const lines = [`Captured ${arr.length} request(s):`];
+  for (const r of arr.slice(0, 40)) lines.push(`  [${r.status}] ${r.method} ${r.url.slice(0, 120)}`);
+  return { content: lines.join('\n') };
+}
+
+// ---- conditional_step / loop_until ----------------------------------
+async function _checkCondition(cond, tabId) {
+  if (!cond) return false;
+  if (cond.url_contains) {
+    const tab = await chrome.tabs.get(tabId);
+    return (tab.url || '').includes(cond.url_contains);
+  }
+  if (cond.text_contains) {
+    return await execIsolated(tabId, (t) => (document.body?.innerText || '').toLowerCase().includes(t.toLowerCase()), [cond.text_contains]);
+  }
+  if (cond.selector) {
+    const exists = await execIsolated(tabId, (s) => {
+      try { return !!document.querySelector(s); } catch { return false; }
+    }, [cond.selector]);
+    return cond.exists === false ? !exists : !!exists;
+  }
+  return false;
+}
+
+async function tool_conditionalStep({ if: condition, then: thenSteps, else: elseSteps, tab_id }, ctx) {
+  const tab = await resolveTab(tab_id);
+  const matched = await _checkCondition(condition, tab.id);
+  const branch = matched ? (thenSteps || []) : (elseSteps || []);
+  const tag = matched ? 'THEN' : 'ELSE';
+  if (!branch.length) return { content: `Condition: ${tag} (no steps to run).` };
+  const results = [];
+  for (const [i, step] of branch.entries()) {
+    const r = await executeTool(step.tool, step.input || {}, ctx);
+    results.push(`#${i + 1} ${step.tool}: ${r.is_error ? '✗ ' + (r.content || '').slice(0, 80) : '✓ ' + (r.content || '').slice(0, 80)}`);
+    if (r.is_error) break;
+  }
+  return { content: `Branch: ${tag}\n${results.join('\n')}` };
+}
+
+async function tool_loopUntil({ steps, until, max_iterations = 10, delay_ms = 500, tab_id }, ctx) {
+  if (!Array.isArray(steps) || !steps.length) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'steps required.' };
+  if (!until) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'until condition required.' };
+  const tab = await resolveTab(tab_id);
+  for (let i = 0; i < max_iterations; i++) {
+    if (await _checkCondition(until, tab.id)) {
+      return { content: `✓ Stopped after ${i} iteration(s) — condition met.` };
+    }
+    for (const step of steps) {
+      await executeTool(step.tool, step.input || { tab_id: tab.id }, ctx);
+    }
+    await new Promise(r => setTimeout(r, delay_ms));
+  }
+  if (await _checkCondition(until, tab.id)) {
+    return { content: `✓ Condition met after ${max_iterations} iterations.` };
+  }
+  return { is_error: true, error_code: ERR_CODES.TIMEOUT, content: `Condition not met after ${max_iterations} iterations.` };
+}
+
+// ---- download_all_images --------------------------------------------
+async function tool_downloadAllImages({ tab_id, selector = 'img', folder, min_size = 100 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const urls = await execIsolated(tab.id, (sel, ms) => {
+    return [...document.querySelectorAll(sel)]
+      .filter(i => i.tagName === 'IMG')
+      .filter(i => (i.naturalWidth || i.width) >= ms || (i.naturalHeight || i.height) >= ms)
+      .map(i => i.src).filter(s => s && !s.startsWith('data:'));
+  }, [selector, min_size]);
+  if (!urls.length) return { content: 'No images matched.' };
+  const baseFolder = folder || `moonbridge-images-${Date.now().toString(36)}`;
+  let saved = 0;
+  for (const [i, url] of urls.entries()) {
+    try {
+      const ext = (url.match(/\.(png|jpg|jpeg|gif|webp|svg)/i) || [])[1] || 'png';
+      await chrome.downloads.download({ url, filename: `${baseFolder}/img-${String(i).padStart(3, '0')}.${ext}` });
+      saved++;
+    } catch {}
+  }
+  return { content: `✓ Downloaded ${saved}/${urls.length} images to Downloads/${baseFolder}/` };
+}
+
+// ---- DB (key-value table on top of workspace) -----------------------
+const _DB_KEY = 'mb_db';
+
+async function _dbRead() { const { [_DB_KEY]: db } = await chrome.storage.local.get([_DB_KEY]); return db && typeof db === 'object' ? db : {}; }
+async function _dbWrite(db) { await chrome.storage.local.set({ [_DB_KEY]: db }); }
+
+async function tool_dbSet({ table, id, data }) {
+  if (!table || !id) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'table, id required.' };
+  const db = await _dbRead();
+  db[table] = db[table] || {};
+  db[table][id] = { ...data, _id: id, _updated_at: Date.now() };
+  await _dbWrite(db);
+  return { content: `✓ db.${table}[${id}] = ${JSON.stringify(data).slice(0, 100)}. Total in table: ${Object.keys(db[table]).length}.` };
+}
+
+async function tool_dbGet({ table, id }) {
+  if (!table) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'table required.' };
+  const db = await _dbRead();
+  if (!db[table]) return { content: `(table "${table}" empty)` };
+  if (id) {
+    const r = db[table][id];
+    if (!r) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `Not found: db.${table}[${id}]` };
+    return { content: '```json\n' + JSON.stringify(r, null, 2) + '\n```' };
+  }
+  const all = Object.values(db[table]);
+  return { content: `${all.length} rows in ${table}:\n\`\`\`json\n${JSON.stringify(all, null, 2)}\n\`\`\`` };
+}
+
+async function tool_dbQuery({ table, where = {}, limit = 100 }) {
+  if (!table) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'table required.' };
+  const db = await _dbRead();
+  if (!db[table]) return { content: `(table empty)` };
+  const matches = (row, conditions) => {
+    for (const [k, v] of Object.entries(conditions || {})) {
+      if (typeof v === 'object' && v?.op) {
+        if (v.op === 'contains' && !String(row[k] ?? '').includes(v.value)) return false;
+        if (v.op === 'gt' && !(row[k] > v.value)) return false;
+        if (v.op === 'lt' && !(row[k] < v.value)) return false;
+      } else {
+        if (row[k] !== v) return false;
+      }
+    }
+    return true;
+  };
+  const rows = Object.values(db[table]).filter(r => matches(r, where)).slice(0, limit);
+  return { content: `${rows.length} match(es):\n\`\`\`json\n${JSON.stringify(rows, null, 2)}\n\`\`\`` };
+}
+
+async function tool_dbDelete({ table, id, where }) {
+  if (!table) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'table required.' };
+  const db = await _dbRead();
+  if (!db[table]) return { content: '(table empty)' };
+  let removed = 0;
+  if (id) { if (db[table][id]) { delete db[table][id]; removed = 1; } }
+  else if (where) {
+    const matches = (row) => Object.entries(where).every(([k, v]) => row[k] === v);
+    for (const k of Object.keys(db[table])) {
+      if (matches(db[table][k])) { delete db[table][k]; removed++; }
+    }
+  }
+  await _dbWrite(db);
+  return { content: `✓ Deleted ${removed} record(s) from ${table}.` };
 }
