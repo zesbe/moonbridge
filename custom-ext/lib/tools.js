@@ -2698,7 +2698,17 @@ async function tool_click({ selector, tab_id, button = 'left', timeout_ms = 600,
   }
   await indicator(tab.id, { type: 'CC_UNHIGHLIGHT' });
   if (!result?.ok) {
-    return { is_error: true, error_code: ERR_CODES.NOT_FOUND,
+    // Map fine-grained error_kind from clickInPage to ERR_CODES so the
+    // model can choose recovery strategy (close overlay vs find different
+    // selector vs wait for enable).
+    const kindMap = {
+      NOT_FOUND:     ERR_CODES.NOT_FOUND,
+      NOT_VISIBLE:   ERR_CODES.NOT_FOUND,        // hidden = effectively not there
+      DISABLED:      ERR_CODES.INVALID_INPUT,    // valid selector but unactionable
+      COVERED:       ERR_CODES.NOT_CLICKABLE || 'NOT_CLICKABLE',  // overlay/modal blocking
+    };
+    const code = kindMap[result?.error_kind] || ERR_CODES.NOT_FOUND;
+    return { is_error: true, error_code: code,
              content: result?.error || `Click failed: selector "${selector}" not found within ${timeout_ms}ms` };
   }
   await new Promise((r) => setTimeout(r, 350));
@@ -2732,13 +2742,46 @@ function clickInPage(selector, button) {
     try { return document.querySelector(sel); } catch { return null; }
   }
   const el = resolve(selector);
-  if (!el) return { ok: false, error: `Element not found: ${selector}` };
-  const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 60);
+  if (!el) return { ok: false, error: `Element not found: ${selector}`, error_kind: 'NOT_FOUND' };
+  // Differentiate error categories so the agent can pick recovery strategy.
+  // - NOT_VISIBLE: 0x0 rect or display:none/visibility:hidden
+  // - DISABLED: aria-disabled / disabled attr → click won't fire
+  // - COVERED: another element at the click point (overlay, modal)
+  const cs = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  if (cs.display === 'none' || cs.visibility === 'hidden') {
+    return { ok: false, error: `Element hidden (display/visibility): ${selector}`, error_kind: 'NOT_VISIBLE' };
+  }
+  if (r.width === 0 && r.height === 0) {
+    return { ok: false, error: `Element has zero size: ${selector}`, error_kind: 'NOT_VISIBLE' };
+  }
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') {
+    return { ok: false, error: `Element is disabled: ${selector}`, error_kind: 'DISABLED' };
+  }
   el.scrollIntoView({ block: 'center', inline: 'center' });
+  // Re-measure after scroll
+  const r2 = el.getBoundingClientRect();
+  const cx = r2.left + r2.width / 2;
+  const cy = r2.top + r2.height / 2;
+  // Detect overlay covering the target
+  try {
+    const top = document.elementFromPoint(cx, cy);
+    if (top && top !== el && !el.contains(top) && !top.contains(el)) {
+      const topTag = top.tagName.toLowerCase();
+      const topId = top.id ? `#${top.id}` : '';
+      const topClass = top.className && typeof top.className === 'string' ? `.${top.className.split(' ').slice(0, 2).join('.')}` : '';
+      return {
+        ok: false,
+        error: `Element covered by ${topTag}${topId}${topClass}. Likely modal/overlay/cookie-banner.`,
+        error_kind: 'COVERED',
+        covered_by: `${topTag}${topId}${topClass}`,
+      };
+    }
+  } catch {}
+  const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 60);
   el.focus?.();
   if (button === 'right') {
-    const r = el.getBoundingClientRect();
-    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2, clientX: cx, clientY: cy }));
   } else if (button === 'middle') {
     el.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
   } else {

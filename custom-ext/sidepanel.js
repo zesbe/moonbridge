@@ -1374,11 +1374,13 @@ function finalizeBatch() {
         }
       } catch {}
       // After read window, soft-collapse body but keep header visible.
-      // User can click to re-expand. No DOM destroy unless next turn comes.
-      setTimeout(() => {
+      // User can click to re-expand. Stash the timer id on the element so
+      // compactPreviousTurns can cancel it if a new turn starts early.
+      const tid = setTimeout(() => {
         if (!b.isConnected || b.classList.contains('failed')) return;
         b.classList.add('auto-compact', 'collapsed', 'turn-summary');
       }, 3000);
+      b.__mbCompactTimer = tid;
     }
     b.dataset.completed = '1';
   }
@@ -1410,13 +1412,27 @@ function gracefulRemoveBatch(b) {
 }
 
 // Called when a new turn begins (user sends a new message). Compacts
-// previously-completed turn-summaries to small chips so they don't pile up.
+// previously-completed batches to small chips so they don't pile up —
+// even those still in the 3s "celebrate" window (cancels the pending
+// auto-compact timer first).
 function compactPreviousTurns() {
   try {
-    messagesEl.querySelectorAll('.activity-batch.turn-summary:not(.mini)').forEach((el) => {
-      el.classList.add('mini');           // compact display
-      el.classList.add('collapsed');      // ensure body hidden
+    // Match all completed batches (with or without .turn-summary), not just
+    // ones that already finished their grace window. Old code only matched
+    // .turn-summary which left non-summary completed batches stuck at full
+    // size and broke layout for turn 2 onwards.
+    messagesEl.querySelectorAll('.activity-batch.completed:not(.failed):not(.mini)').forEach((el) => {
+      // Cancel pending auto-compact timer so it doesn't fire after .mini
+      // is applied (would re-toggle classes mid-animation)
+      if (el.__mbCompactTimer) {
+        clearTimeout(el.__mbCompactTimer);
+        el.__mbCompactTimer = null;
+      }
+      el.classList.add('turn-summary');   // ensure summary state
+      el.classList.add('mini');           // shrink to chip
+      el.classList.add('collapsed');      // hide body
       el.classList.remove('auto-compact'); // remove transition class
+      el.classList.remove('celebrating');  // stop celebrate animation
     });
   } catch {}
 }
