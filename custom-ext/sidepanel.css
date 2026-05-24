@@ -875,9 +875,39 @@ body {
 .ticker[data-mode="action"] .ticker-icon {
   animation: ticker-pulse 0.9s ease-in-out infinite;
 }
+.ticker[data-mode="action"] {
+  animation: ticker-action-glow 1.6s ease-in-out infinite;
+}
+@keyframes ticker-action-glow {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.10); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.30), 0 0 14px rgba(217, 119, 87, 0.18); }
+}
+.ticker[data-mode="thinking"] .ticker-line::after {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+  background-image:
+    radial-gradient(circle 1.5px at 2px 2px, rgba(217, 119, 87, 0.7) 100%, transparent 100%),
+    radial-gradient(circle 1.5px at 7px 2px, rgba(217, 119, 87, 0.45) 100%, transparent 100%),
+    radial-gradient(circle 1.5px at 12px 2px, rgba(217, 119, 87, 0.25) 100%, transparent 100%);
+  animation: ticker-dots 1.2s ease-in-out infinite;
+}
+@keyframes ticker-dots {
+  0%, 100% { opacity: 0.55; transform: translateY(0); }
+  33%      { opacity: 0.85; transform: translateY(-1px); }
+  66%      { opacity: 0.7;  transform: translateY(0); }
+}
 .ticker.done .ticker-icon {
   color: rgba(74, 222, 128, 0.7);
-  animation: none;
+  animation: ticker-icon-success 480ms cubic-bezier(0.22, 0.85, 0.32, 1.4);
+}
+@keyframes ticker-icon-success {
+  0%   { transform: scale(0.7); }
+  55%  { transform: scale(1.45); }
+  100% { transform: scale(1); }
 }
 .ticker.fading-out {
   opacity: 0;
@@ -1471,11 +1501,29 @@ body {
   gap: 11px;
   padding: 7px 0;
   position: relative;
-  animation: item-fade-in 280ms var(--ease);
+  animation: item-slide-in 360ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
 }
-@keyframes item-fade-in {
-  from { opacity: 0; transform: translateX(-4px); }
-  to { opacity: 1; transform: translateX(0); }
+@keyframes item-slide-in {
+  0%   { opacity: 0; transform: translateX(-12px) scale(0.96); }
+  60%  { opacity: 0.85; transform: translateX(2px) scale(1.01); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+/* "Just landed" highlight pulse — runs once on entry then disables */
+.activity-item.running::before {
+  content: '';
+  position: absolute;
+  inset: -2px -8px;
+  border-radius: 8px;
+  background: radial-gradient(ellipse at left center,
+    rgba(217, 119, 87, 0.08) 0%, transparent 60%);
+  animation: item-flash 900ms ease-out;
+  pointer-events: none;
+}
+@keyframes item-flash {
+  0%   { opacity: 0; transform: scaleX(0.7); }
+  40%  { opacity: 1; transform: scaleX(1); }
+  100% { opacity: 0; transform: scaleX(1); }
 }
 
 /* Status icon circle */
@@ -1524,11 +1572,43 @@ body {
   border-color: rgba(74, 222, 128, 0.40);
   background: rgba(74, 222, 128, 0.10);
   color: rgba(74, 222, 128, 0.95);
+  animation: icon-success-pop 460ms cubic-bezier(0.22, 0.85, 0.32, 1.4);
+}
+@keyframes icon-success-pop {
+  0%   { transform: scale(0.85); }
+  55%  { transform: scale(1.18); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.18); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
 }
 .activity-item.failed .action-icon {
   border-color: rgba(231, 76, 60, 0.45);
   background: rgba(231, 76, 60, 0.10);
   color: var(--error);
+  animation: icon-error-shake 420ms ease-in-out;
+}
+@keyframes icon-error-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-3px); }
+  40%      { transform: translateX(3px); }
+  60%      { transform: translateX(-2px); }
+  80%      { transform: translateX(2px); }
+}
+
+/* Celebrating — runs on the whole batch when finalized successfully */
+.activity-batch.celebrating {
+  animation: batch-celebrate 520ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
+}
+@keyframes batch-celebrate {
+  0%   { transform: translateY(0) scale(1); }
+  35%  { transform: translateY(-2px) scale(1.005); border-color: rgba(74, 222, 128, 0.30); }
+  100% { transform: translateY(0) scale(1); }
+}
+.activity-batch.completed .batch-status {
+  animation: status-success-pop 460ms cubic-bezier(0.22, 0.85, 0.32, 1.4);
+}
+@keyframes status-success-pop {
+  0%   { transform: scale(0.85); }
+  55%  { transform: scale(1.45); box-shadow: 0 0 0 8px rgba(74, 222, 128, 0.20); }
+  100% { transform: scale(1); }
 }
 
 .action-content {

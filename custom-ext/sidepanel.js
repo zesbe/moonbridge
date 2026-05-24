@@ -1287,6 +1287,7 @@ function ensureBatchForCurrentTurn() {
 
   wrap.dataset.total = '0';
   wrap.dataset.done = '0';
+  wrap.dataset.createdAt = String(Date.now());
   _currentBatch = wrap;
   return wrap;
 }
@@ -1347,16 +1348,18 @@ function finalizeBatch() {
     } else {
       b.classList.add('completed');
       b.dataset.completed = '1';
-      // After read window: full DOM destroy.
-      // Old logic only added .collapsed → batch-head chip (~50px) stayed
-      // in the document forever, stacking with margins to look like blank
-      // space. Now we collapse to 0 height THEN .remove() the node.
+      // Trigger a quick "celebrate" animation — green flash on status dot,
+      // checkmark fade-in, etc. Lets the user enjoy the success state
+      // before anything starts collapsing.
+      requestAnimationFrame(() => b.classList.add('celebrating'));
+      // Longer read window — was 1.4s, now 3.2s so the live-streaming
+      // animation feels intentional, not a flicker. Falls back to graceful
+      // fade-out (not instant yeet) on next batch start.
       setTimeout(() => {
         if (!b.isConnected || b.classList.contains('failed')) return;
-        b.classList.add('shrinking', 'auto-compact', 'collapsed');
-        // Wait for shrink animation to complete before yanking from DOM
-        setTimeout(() => { try { b.remove(); } catch {} }, 320);
-      }, 1400);
+        // Soft compact: collapse body but keep summary chip visible briefly
+        b.classList.add('auto-compact', 'collapsed');
+      }, 3200);
     }
     b.dataset.completed = '1';
   }
@@ -1370,18 +1373,29 @@ function startNewBatch() {
     b.classList.add('completed');
     b.dataset.completed = '1';
     if (!b.classList.contains('failed')) {
-      // Previous batch already done — yeet immediately, no read-window.
-      try { b.remove(); } catch {}
+      // Previous batch fades out gracefully — was instant remove, now
+      // animates out so user sees it acknowledged before disappearing.
+      gracefulRemoveBatch(b);
     }
   }
   _currentBatch = null;
-  // Also reap any older completed-but-still-fading batches that haven't
-  // finished their removal timer. Belt-and-suspenders against stacking.
+  // Reap any older completed-but-not-failed batches that have lingered too
+  // long (>10s old) so DOM doesn't accumulate. Recent ones get to live.
   try {
+    const now = Date.now();
     messagesEl.querySelectorAll('.activity-batch.completed:not(.failed)').forEach((el) => {
-      try { el.remove(); } catch {}
+      const created = parseInt(el.dataset.createdAt || '0', 10);
+      if (created && now - created > 10000) {
+        gracefulRemoveBatch(el);
+      }
     });
   } catch {}
+}
+
+function gracefulRemoveBatch(b) {
+  if (!b?.isConnected) return;
+  b.classList.add('shrinking');
+  setTimeout(() => { try { b.remove(); } catch {} }, 360);
 }
 
 function createActivityItem(toolName) {
@@ -1881,11 +1895,13 @@ async function runAgentTurn(continuingExisting = false) {
       setTickerLine(thinkStream, 'Done', 'idle');
       thinkStream.wrap.classList.add('done');
       const tickerEl = thinkStream.wrap;
+      // Linger longer so user can see the ✓ Done state — was 1.2s, now 2.6s.
+      // Then animate out gracefully.
       setTimeout(() => {
         if (!tickerEl.isConnected) return;
         tickerEl.classList.add('fading-out');
-        setTimeout(() => { try { tickerEl.remove(); } catch {} }, 320);
-      }, 1200);
+        setTimeout(() => { try { tickerEl.remove(); } catch {} }, 360);
+      }, 2600);
     }
   } catch (e) {
     appendError(`Unexpected: ${e.message}`);
