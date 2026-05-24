@@ -818,18 +818,36 @@ export const ALL_TOOLS = [
   // ===== File upload =====
   {
     name: 'upload_image',
-    description: 'Upload an image to an input[type=file] or drop target. Fetches the image from a URL (or base64) and programmatically attaches it via DataTransfer.',
+    description: 'Upload a file (image / PDF / any binary) to an input[type=file] or drop target. Source: chat attachment (preferred), URL, or base64. Programmatically attaches via DataTransfer.',
     input_schema: {
       type: 'object',
       properties: {
         selector: { type: 'string', description: 'CSS selector for input[type=file] or drop target.' },
-        url: { type: 'string', description: 'Image URL. Required if base64 not provided.' },
-        base64: { type: 'string', description: 'Base64-encoded image (without data: prefix). Alternative to url.' },
-        filename: { type: 'string', description: 'Default "image.png".' },
-        mime: { type: 'string', description: 'Default "image/png".' },
+        attachment_index: { type: 'integer', description: 'Index from list_chat_attachments. Takes precedence over base64 / url. Use this when user attached a file in chat.' },
+        url: { type: 'string', description: 'File URL. Required if no attachment_index and no base64.' },
+        base64: { type: 'string', description: 'Base64-encoded data (without data: prefix). Used only if attachment_index not given.' },
+        filename: { type: 'string', description: 'Override filename. Defaults to attachment name or "image.png".' },
+        mime: { type: 'string', description: 'Override MIME. Defaults to attachment mime or "image/png".' },
         tab_id: { type: 'integer' },
       },
       required: ['selector'],
+    },
+  },
+
+  // ===== Chat attachment access (user-supplied files) =====
+  {
+    name: 'list_chat_attachments',
+    description: 'List files/images the user attached in the most recent message of this conversation. Returns [{index, filename, mime, size, kind}]. Use before get_chat_attachment / upload_image(attachment_index=...).',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_chat_attachment',
+    description: 'Return the user-attached file as base64 (no data: prefix). Use list_chat_attachments first to discover available files. For images/PDFs the model already sees the content via vision/document blocks; this tool exposes the raw bytes for upload pipelines.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        index: { type: 'integer', description: 'Attachment index from list_chat_attachments. Default 0.' },
+      },
     },
   },
 
@@ -2139,7 +2157,9 @@ export async function executeTool(name, input, ctx = {}) {
       case 'set_zoom':       return wrap(await tool_setZoom(input || {}));
       case 'get_zoom':       return wrap(await tool_getZoom(input || {}));
       case 'resize_window':  return wrap(await tool_resizeWindow(input || {}));
-      case 'upload_image':   return wrap(await tool_uploadImage(input || {}));
+      case 'upload_image':   return wrap(await tool_uploadImage(input || {}, ctx));
+      case 'list_chat_attachments': return wrap(await tool_listChatAttachments({}, ctx));
+      case 'get_chat_attachment':   return wrap(await tool_getChatAttachment(input || {}, ctx));
       case 'update_plan':    return wrap(await tool_updatePlan(input || {}, ctx));
       case 'gif_capture':    return wrap(await tool_gifCapture(input || {}));
       case 'ocr_image':      return wrap(await tool_ocrImage(input || {}, ctx));
@@ -4677,12 +4697,38 @@ async function tool_resizeWindow({ window_id, width, height, state }) {
 // UPLOAD IMAGE
 // =====================================================================
 
-async function tool_uploadImage({ selector, url, base64, filename = 'image.png', mime = 'image/png', tab_id }) {
-  if (!url && !base64) return { is_error: true, content: 'url or base64 required.' };
+async function tool_uploadImage({ selector, url, base64, attachment_index, filename, mime, tab_id }, ctx = {}) {
+  // Resolve source priority: attachment_index > base64 > url
+  let b64 = null;
+  let resolvedFilename = filename;
+  let resolvedMime = mime;
+  if (attachment_index != null) {
+    const att = _getChatAttachment(ctx, attachment_index);
+    if (!att) {
+      return { is_error: true, error_code: ERR_CODES.NOT_FOUND,
+               content: `No chat attachment at index ${attachment_index}. Call list_chat_attachments first.` };
+    }
+    if (!att.base64) {
+      return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+               content: `Attachment ${attachment_index} (${att.name}) has no binary data — text files are inlined into the message instead.` };
+    }
+    b64 = att.base64;
+    resolvedFilename = resolvedFilename || att.name || 'file';
+    resolvedMime = resolvedMime || att.mime || 'application/octet-stream';
+  } else if (base64) {
+    b64 = base64;
+  }
+  resolvedFilename = resolvedFilename || 'image.png';
+  resolvedMime = resolvedMime || 'image/png';
+
+  if (!b64 && !url) {
+    return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+             content: 'attachment_index, base64, or url required.' };
+  }
+
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
   // Resolve image bytes in extension context (CORS-safe via fetch)
-  let b64 = base64;
   if (!b64 && url) {
     try {
       const res = await fetch(url);
@@ -4694,9 +4740,9 @@ async function tool_uploadImage({ selector, url, base64, filename = 'image.png',
       b64 = btoa(bin);
     } catch (e) { return { is_error: true, content: `Fetch image error: ${e.message}` }; }
   }
-  const r = await execIsolated(tab.id, uploadImageInPage, [selector, b64, filename, mime]);
+  const r = await execIsolated(tab.id, uploadImageInPage, [selector, b64, resolvedFilename, resolvedMime]);
   if (!r?.ok) return { is_error: true, content: r?.error || 'failed' };
-  return { content: `Uploaded ${filename} (${r.bytes} bytes) to ${selector}.` };
+  return { content: `Uploaded ${resolvedFilename} (${r.bytes} bytes, ${resolvedMime}) to ${selector}.` };
 }
 function uploadImageInPage(sel, b64, filename, mime) {
   function resolve(s) {
@@ -4734,6 +4780,100 @@ function uploadImageInPage(sel, b64, filename, mime) {
   }
   fire('dragenter'); fire('dragover'); fire('drop');
   return { ok: true, bytes: bytes.length };
+}
+
+// =====================================================================
+// CHAT ATTACHMENT ACCESS
+// Lets the agent read files the user attached in the current/last message,
+// then chain into upload_image(attachment_index=N) for any website upload.
+// Source of truth: ctx.attachments (passed by sidepanel via runAgent).
+// Falls back to the most recent user message in conversation.
+// =====================================================================
+
+function _resolveAttachmentList(ctx) {
+  // 1) explicit ctx.attachments (best: still has base64 even after message clears)
+  if (Array.isArray(ctx?.attachments) && ctx.attachments.length) return ctx.attachments;
+  // 2) walk conversation backwards for last user message with image/document blocks
+  const conv = ctx?.conversation;
+  if (Array.isArray(conv)) {
+    for (let i = conv.length - 1; i >= 0; i--) {
+      const m = conv[i];
+      if (m?.role !== 'user') continue;
+      if (Array.isArray(m.content)) {
+        const blocks = m.content.filter((b) => b?.type === 'image' || b?.type === 'document');
+        if (blocks.length) {
+          return blocks.map((b, idx) => ({
+            name: b.source?.filename || (b.type === 'image' ? `image_${idx}.png` : `document_${idx}.pdf`),
+            mime: b.source?.media_type || (b.type === 'image' ? 'image/png' : 'application/pdf'),
+            base64: b.source?.data || '',
+            kind: b.type === 'image' ? 'image' : 'pdf',
+            size: b.source?.data ? Math.floor(b.source.data.length * 0.75) : 0,
+          }));
+        }
+      }
+      break; // only inspect the last user message
+    }
+  }
+  return [];
+}
+
+function _getChatAttachment(ctx, index = 0) {
+  const list = _resolveAttachmentList(ctx);
+  return list[index] || null;
+}
+
+async function tool_listChatAttachments(_input, ctx = {}) {
+  const list = _resolveAttachmentList(ctx);
+  if (!list.length) {
+    return { content: 'No attachments in current message. Ask the user to attach a file (paperclip icon) or paste/drag one in.' };
+  }
+  const out = list.map((a, i) => ({
+    index: i,
+    filename: a.name || a.filename || `attachment_${i}`,
+    mime: a.mime || 'application/octet-stream',
+    size: a.size || (a.base64 ? Math.floor(a.base64.length * 0.75) : 0),
+    kind: a.kind || (String(a.mime || '').startsWith('image/') ? 'image'
+                  : a.mime === 'application/pdf' ? 'pdf'
+                  : a.text ? 'text' : 'binary'),
+    has_binary: !!a.base64,
+  }));
+  return { content: JSON.stringify(out, null, 2) };
+}
+
+async function tool_getChatAttachment({ index = 0 }, ctx = {}) {
+  const att = _getChatAttachment(ctx, index);
+  if (!att) {
+    return { is_error: true, error_code: ERR_CODES.NOT_FOUND,
+             content: `No chat attachment at index ${index}. Call list_chat_attachments first.` };
+  }
+  // Text files: inline as text
+  if (att.kind === 'text' && att.text != null) {
+    return {
+      content: JSON.stringify({
+        filename: att.name, mime: att.mime || 'text/plain',
+        size: att.size || (att.text || '').length,
+        text: att.text, base64: '',
+      }),
+    };
+  }
+  if (!att.base64) {
+    return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+             content: `Attachment ${index} (${att.name}) has no binary data available.` };
+  }
+  // Hard cap to avoid frying the context window — surface size + offer chunk hint.
+  const MAX_INLINE = 15 * 1024 * 1024 * 4 / 3 | 0; // ~15MB raw
+  if (att.base64.length > MAX_INLINE) {
+    return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+             content: `Attachment ${index} (${att.name}) is ${(att.base64.length * 0.75 / 1024 / 1024).toFixed(1)}MB — too large to return inline. Use upload_image with attachment_index=${index} to push it directly.` };
+  }
+  return {
+    content: JSON.stringify({
+      filename: att.name,
+      mime: att.mime || 'application/octet-stream',
+      size: att.size || Math.floor(att.base64.length * 0.75),
+      base64: att.base64,
+    }),
+  };
 }
 
 // =====================================================================

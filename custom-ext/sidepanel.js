@@ -95,6 +95,8 @@ let saveTimer = null;
 
 // Pending attachments for next send
 let pendingAttachments = []; // [{id, name, mime, size, kind, dataUrl?, text?, base64?}]
+// Most recent SENT attachments — accessible to agent tools (list_chat_attachments / get_chat_attachment / upload_image)
+let lastSentAttachments = [];
 
 // =====================================================================
 // EXAMPLE PROMPTS
@@ -1062,6 +1064,8 @@ const ACTION_VERBS = {
   note_list: 'List notes', note_delete: 'Delete note',
   get_page_diff: 'Diff page', batch: 'Batch',
   update_plan: 'Update plan', gif_capture: 'Capture frames',
+  list_chat_attachments: 'List attachments', get_chat_attachment: 'Read attachment',
+  upload_image: 'Upload file',
 };
 
 const ACTION_ICONS = {
@@ -1101,6 +1105,8 @@ const ACTION_ICONS = {
   note_list: '📝', note_delete: '✕',
   get_page_diff: '🔀', batch: '⚡',
   update_plan: '📋', gif_capture: '🎬',
+  list_chat_attachments: '📎', get_chat_attachment: '📎',
+  upload_image: '⬆️',
 };
 
 // Tool → category, for premium batch titles ("Searching web", "Reading page" …)
@@ -1157,6 +1163,7 @@ const TOOL_CATEGORY = {
   health_check: 'system', set_readonly: 'system',
   clipboard_read: 'system', clipboard_write: 'system',
   execute_js: 'system', save_text: 'system', upload_image: 'system',
+  list_chat_attachments: 'system', get_chat_attachment: 'system',
 };
 
 const CATEGORY_LABEL = {
@@ -1721,6 +1728,7 @@ async function runAgentTurn(continuingExisting = false) {
       toolWhitelist, approvalMode: approvalModeVal, askApproval,
       enableCaching: true, cacheTtl: settings.cacheTtl || '5m',
       traceId,
+      attachments: lastSentAttachments,
       signal: abortCtrl.signal,
     })) {
       if (ev.kind === 'iteration') {
@@ -1801,8 +1809,13 @@ async function runAgentTurn(continuingExisting = false) {
   }
 }
 
-async function sendAgent(userText, userContent) {
+async function sendAgent(userText, userContent, attachments = []) {
   conversation.push({ role: 'user', content: userContent });
+  // Snapshot for chat-attachment tools (list_chat_attachments / get_chat_attachment / upload_image)
+  lastSentAttachments = attachments.map((a) => ({
+    name: a.name, mime: a.mime, size: a.size, kind: a.kind,
+    base64: a.base64 || '', text: a.text || '',
+  }));
   await runAgentTurn();
 }
 
@@ -1823,7 +1836,7 @@ async function send() {
   clearPendingAttachments();
   autoResize();
 
-  if (mode === 'agent') await sendAgent(text, userContent);
+  if (mode === 'agent') await sendAgent(text, userContent, attachments);
   else await sendChat(text, userContent);
 }
 

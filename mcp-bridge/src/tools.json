@@ -1312,7 +1312,7 @@
   },
   {
     "name": "upload_image",
-    "description": "Upload an image to an input[type=file] or drop target. Fetches the image from a URL (or base64) and programmatically attaches it via DataTransfer.",
+    "description": "Upload a file (image / PDF / any binary) to an input[type=file] or drop target. Source: chat attachment (preferred), URL, or base64. Programmatically attaches via DataTransfer.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1320,21 +1320,25 @@
           "type": "string",
           "description": "CSS selector for input[type=file] or drop target."
         },
+        "attachment_index": {
+          "type": "integer",
+          "description": "Index from list_chat_attachments. Takes precedence over base64 / url. Use this when user attached a file in chat."
+        },
         "url": {
           "type": "string",
-          "description": "Image URL. Required if base64 not provided."
+          "description": "File URL. Required if no attachment_index and no base64."
         },
         "base64": {
           "type": "string",
-          "description": "Base64-encoded image (without data: prefix). Alternative to url."
+          "description": "Base64-encoded data (without data: prefix). Used only if attachment_index not given."
         },
         "filename": {
           "type": "string",
-          "description": "Default \"image.png\"."
+          "description": "Override filename. Defaults to attachment name or \"image.png\"."
         },
         "mime": {
           "type": "string",
-          "description": "Default \"image/png\"."
+          "description": "Override MIME. Defaults to attachment mime or \"image/png\"."
         },
         "tab_id": {
           "type": "integer"
@@ -1343,6 +1347,27 @@
       "required": [
         "selector"
       ]
+    }
+  },
+  {
+    "name": "list_chat_attachments",
+    "description": "List files/images the user attached in the most recent message of this conversation. Returns [{index, filename, mime, size, kind}]. Use before get_chat_attachment / upload_image(attachment_index=...).",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "get_chat_attachment",
+    "description": "Return the user-attached file as base64 (no data: prefix). Use list_chat_attachments first to discover available files. For images/PDFs the model already sees the content via vision/document blocks; this tool exposes the raw bytes for upload pipelines.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "description": "Attachment index from list_chat_attachments. Default 0."
+        }
+      }
     }
   },
   {

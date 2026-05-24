@@ -95,6 +95,7 @@ export async function* runAgent({
   enableCaching = true,
   cacheTtl = '5m',
   traceId = null,            // optional trace id for auto-recording
+  attachments = null,        // raw user-attached files (last user message) for chat-attachment tools
   signal,
 }) {
   const userSys = (system && system.trim()) ? system.trim() + '\n\n' : '';
@@ -110,7 +111,7 @@ export async function* runAgent({
   const tools = tagToolsForCaching(filterTools(toolWhitelist), enableCaching, cacheTtl);
 
   // Adapter context for memory/kb tools
-  const adapterCtx = { memory: memoryAdapter, kb: kbAdapter };
+  const adapterCtx = { memory: memoryAdapter, kb: kbAdapter, attachments, conversation };
 
   // Unlimited iterations. Loop runs until:
   //  - stop_reason !== 'tool_use'  (task complete)
