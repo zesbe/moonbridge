@@ -1249,19 +1249,33 @@ function summarizeInput(name, input) {
 }
 
 function scrollToBottom(force = false) {
-  const isNearBottom = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
-  if (force || isNearBottom) {
+  // Always scroll if forced, OR if user hasn't manually scrolled up.
+  // The old logic ("near bottom" 80px check) failed during streaming —
+  // long responses pushed content past the threshold even when user was
+  // following along, then auto-scroll silently stopped.
+  if (force || !userScrolledUp) {
+    _programmaticScroll = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
     if (jumpPill) jumpPill.classList.remove('show');
+    // Reset flag on next tick so user-initiated scrolls register correctly
+    setTimeout(() => { _programmaticScroll = false; }, 0);
   } else {
     if (jumpPill) jumpPill.classList.add('show');
   }
 }
 
 function forceScrollToBottom() {
+  _programmaticScroll = true;
   messagesEl.scrollTop = messagesEl.scrollHeight;
   if (jumpPill) jumpPill.classList.remove('show');
+  userScrolledUp = false;
+  setTimeout(() => { _programmaticScroll = false; }, 0);
 }
+
+// Track whether the user has deliberately scrolled away from the bottom.
+// Programmatic scrolls (auto-scroll during streaming) don't set this.
+let userScrolledUp = false;
+let _programmaticScroll = false;
 
 function setHint(msg) {
   hintEl.textContent = msg || '';
@@ -2037,11 +2051,20 @@ for (const t of libTabs) {
   });
 }
 
-// Jump-to-latest pill
+// Jump-to-latest pill + scroll-up detection
 jumpPill.addEventListener('click', forceScrollToBottom);
 messagesEl.addEventListener('scroll', () => {
-  const isNear = (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
-  jumpPill.classList.toggle('show', !isNear);
+  if (_programmaticScroll) return;  // ignore our own scrolls
+  const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+  // User manually scrolled up if more than ~10px away (small tolerance)
+  if (distanceFromBottom > 40) {
+    userScrolledUp = true;
+    jumpPill.classList.add('show');
+  } else {
+    // User scrolled back to bottom — re-enable auto-follow
+    userScrolledUp = false;
+    jumpPill.classList.remove('show');
+  }
 });
 
 inputEl.addEventListener('keydown', (e) => {
