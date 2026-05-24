@@ -1463,7 +1463,7 @@
   },
   {
     "name": "fetch_url",
-    "description": "Fetch any URL and return its text content (HTML stripped to readable text). Use for raw content access without opening a tab. JSON URLs are returned formatted.",
+    "description": "Fetch any URL and return its text content (HTML stripped to readable text). Use for raw content access without opening a tab. JSON URLs are returned formatted. Pass use_cookies=true to send cookies from the current browser — enables scraping behind-login pages.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1473,6 +1473,34 @@
         "max_chars": {
           "type": "integer",
           "description": "Default 12000."
+        },
+        "use_cookies": {
+          "type": "boolean",
+          "description": "Send cookies from the browser (for behind-login URLs)."
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "HEAD"
+          ],
+          "description": "HTTP method (default GET)."
+        },
+        "headers": {
+          "type": "object",
+          "description": "Custom headers as {key: value}."
+        },
+        "body": {
+          "type": "string",
+          "description": "Request body for POST/PUT/PATCH."
+        },
+        "tab_id": {
+          "type": "integer",
+          "description": "Tab to inherit cookie context from (default: any tab matching domain)."
         }
       },
       "required": [
@@ -1846,6 +1874,131 @@
       "required": [
         "filename",
         "content"
+      ]
+    }
+  },
+  {
+    "name": "watch_element",
+    "description": "Wait for a selector to appear, disappear, or change. More efficient than polling wait_for. Returns when the change happens or timeout.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector or #ref-N."
+        },
+        "change": {
+          "type": "string",
+          "enum": [
+            "appear",
+            "disappear",
+            "text_change",
+            "attribute_change"
+          ],
+          "description": "What to wait for. Default: appear."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max wait (default 10000)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "cdp_key",
+    "description": "Send keyboard event via CDP Input.dispatchKeyEvent — produces isTrusted=true events that pass through more security checks than regular type. Use when standard type/key_press doesn't work (e.g. some web games, secure inputs).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to type, OR a key combo like \"ctrl+a\", \"Enter\", \"ArrowDown\"."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "set_readonly",
+    "description": "Lock the session into read-only mode (no clicks, types, or navigation). Useful for demos or audits where the agent should only observe. Pass enabled=false to unlock.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "true = lock, false = unlock."
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    }
+  },
+  {
+    "name": "stable_ref",
+    "description": "Create a stable ref to an element that survives across get_page calls. Returns a $stable-N selector you can reuse. Use when you need to remember an element across multiple steps.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector or #ref-N to capture."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "group_tabs",
+    "description": "Group multiple tabs into a colored Chrome tab group. Useful when researching to keep related tabs together.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Tabs to group."
+        },
+        "title": {
+          "type": "string",
+          "description": "Group label."
+        },
+        "color": {
+          "type": "string",
+          "enum": [
+            "grey",
+            "blue",
+            "red",
+            "yellow",
+            "green",
+            "pink",
+            "purple",
+            "cyan",
+            "orange"
+          ],
+          "description": "Group color."
+        }
+      },
+      "required": [
+        "tab_ids"
       ]
     }
   }

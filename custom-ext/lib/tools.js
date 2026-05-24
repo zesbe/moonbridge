@@ -910,12 +910,17 @@ export const ALL_TOOLS = [
   },
   {
     name: 'fetch_url',
-    description: 'Fetch any URL and return its text content (HTML stripped to readable text). Use for raw content access without opening a tab. JSON URLs are returned formatted.',
+    description: 'Fetch any URL and return its text content (HTML stripped to readable text). Use for raw content access without opening a tab. JSON URLs are returned formatted. Pass use_cookies=true to send cookies from the current browser — enables scraping behind-login pages.',
     input_schema: {
       type: 'object',
       properties: {
         url: { type: 'string' },
         max_chars: { type: 'integer', description: 'Default 12000.' },
+        use_cookies: { type: 'boolean', description: 'Send cookies from the browser (for behind-login URLs).' },
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], description: 'HTTP method (default GET).' },
+        headers: { type: 'object', description: 'Custom headers as {key: value}.' },
+        body: { type: 'string', description: 'Request body for POST/PUT/PATCH.' },
+        tab_id: { type: 'integer', description: 'Tab to inherit cookie context from (default: any tab matching domain).' },
       },
       required: ['url'],
     },
@@ -1147,6 +1152,78 @@ export const ALL_TOOLS = [
       required: ['filename', 'content'],
     },
   },
+
+  // ===== Watch element (observer) =====
+  {
+    name: 'watch_element',
+    description: 'Wait for a selector to appear, disappear, or change. More efficient than polling wait_for. Returns when the change happens or timeout.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector or #ref-N.' },
+        change: { type: 'string', enum: ['appear', 'disappear', 'text_change', 'attribute_change'], description: 'What to wait for. Default: appear.' },
+        timeout_ms: { type: 'integer', description: 'Max wait (default 10000).' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+
+  // ===== Real keyboard via CDP =====
+  {
+    name: 'cdp_key',
+    description: 'Send keyboard event via CDP Input.dispatchKeyEvent — produces isTrusted=true events that pass through more security checks than regular type. Use when standard type/key_press doesn\'t work (e.g. some web games, secure inputs).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to type, OR a key combo like "ctrl+a", "Enter", "ArrowDown".' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['text'],
+    },
+  },
+
+  // ===== Read-only mode =====
+  {
+    name: 'set_readonly',
+    description: 'Lock the session into read-only mode (no clicks, types, or navigation). Useful for demos or audits where the agent should only observe. Pass enabled=false to unlock.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'true = lock, false = unlock.' },
+      },
+      required: ['enabled'],
+    },
+  },
+
+  // ===== Stable refs =====
+  {
+    name: 'stable_ref',
+    description: 'Create a stable ref to an element that survives across get_page calls. Returns a $stable-N selector you can reuse. Use when you need to remember an element across multiple steps.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector or #ref-N to capture.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+
+  // ===== Tab group =====
+  {
+    name: 'group_tabs',
+    description: 'Group multiple tabs into a colored Chrome tab group. Useful when researching to keep related tabs together.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_ids: { type: 'array', items: { type: 'integer' }, description: 'Tabs to group.' },
+        title: { type: 'string', description: 'Group label.' },
+        color: { type: 'string', enum: ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'], description: 'Group color.' },
+      },
+      required: ['tab_ids'],
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1231,9 +1308,25 @@ async function highlightAndPoint(tabId, selector, label) {
 // Dispatcher
 // =====================================================================
 
+// Mutation tools blocked when set_readonly is enabled
+const _MUTATING_TOOLS = new Set([
+  'click', 'hover', 'type', 'key_press', 'select_option', 'fill_form',
+  'scroll', 'navigate', 'back', 'forward', 'reload', 'execute_js',
+  'new_tab', 'close_tab', 'switch_tab', 'duplicate_tab',
+  'click_and_read', 'navigate_and_read', 'drag_drop', 'mouse_drag',
+  'double_click', 'triple_click', 'set_zoom', 'resize_window',
+  'upload_image', 'set_cookie', 'delete_cookie', 'clear_cookies',
+  'download_file', 'save_text', 'mock_api_start',
+  'cdp_key', 'group_tabs',
+]);
+
 export async function executeTool(name, input, ctx = {}) {
   if (ctx.whitelist && !ctx.whitelist.has(name)) {
     return { is_error: true, content: `Tool "${name}" is disabled for this conversation.` };
+  }
+  // Read-only enforcement (per AI feedback "User bisa lock sesi jadi cuma boleh baca")
+  if (_MUTATING_TOOLS.has(name) && await _isReadonly()) {
+    return { is_error: true, content: `🔒 Read-only mode is active. "${name}" is blocked. Call set_readonly with enabled=false to unlock.` };
   }
   const needs = await needsApproval(name, input, ctx);
   if (needs.required && ctx.askApproval) {
@@ -1323,6 +1416,11 @@ export async function executeTool(name, input, ctx = {}) {
       case 'mock_api_start': return await tool_mockApiStart(input || {});
       case 'mock_api_stop':  return await tool_mockApiStop(input || {});
       case 'attach_file':    return await tool_attachFile(input || {});
+      case 'watch_element':  return await tool_watchElement(input || {});
+      case 'cdp_key':        return await tool_cdpKey(input || {});
+      case 'set_readonly':   return await tool_setReadonly(input || {});
+      case 'stable_ref':     return await tool_stableRef(input || {});
+      case 'group_tabs':     return await tool_groupTabs(input || {});
       case 'web_search':     return await tool_webSearch(input || {});
       case 'youtube_transcript': return await tool_youtubeTranscript(input || {});
       case 'read_pdf':       return await tool_readPdf(input || {});
@@ -2350,29 +2448,61 @@ async function tool_readPdf({ url, max_chars = 20000 }) {
 // FETCH URL — generic readable text
 // =====================================================================
 
-async function tool_fetchUrl({ url, max_chars = 12000 }) {
+async function tool_fetchUrl({ url, max_chars = 12000, use_cookies = false, tab_id, method = 'GET', headers = {}, body = null }) {
   if (!url) return { is_error: true, content: 'url is required.' };
+
+  const fetchOpts = {
+    method,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MoonBridge/1.0)', ...headers },
+  };
+  if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+    fetchOpts.body = body;
+  }
+
+  // Honor cookies from a tab — addresses AI feedback "scraping behind-login jadi jauh lebih mudah"
+  if (use_cookies) {
+    try {
+      let targetUrl = url;
+      let targetCookies;
+      if (tab_id) {
+        const tab = await chrome.tabs.get(tab_id);
+        targetCookies = await chrome.cookies.getAll({ url: targetUrl });
+      } else {
+        targetCookies = await chrome.cookies.getAll({ url });
+      }
+      if (targetCookies.length) {
+        const cookieStr = targetCookies.map(c => `${c.name}=${c.value}`).join('; ');
+        fetchOpts.headers['Cookie'] = cookieStr;
+        fetchOpts.credentials = 'include';
+      }
+    } catch (e) {
+      // Cookie attach failed — continue without (fetch_url shouldn't hard-fail just because cookies)
+    }
+  }
+
   let res;
-  try { res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MoonBridge/1.0)' } }); }
+  try { res = await fetch(url, fetchOpts); }
   catch (e) { return { is_error: true, content: `Fetch error: ${e.message}` }; }
-  if (!res.ok) return { is_error: true, content: `HTTP ${res.status}` };
+  if (!res.ok) return { is_error: true, content: `HTTP ${res.status}: ${res.statusText}` };
+
   const ct = (res.headers.get('content-type') || '').toLowerCase();
+  const cookieNote = use_cookies && fetchOpts.headers['Cookie'] ? `\n[cookies: ${fetchOpts.headers['Cookie'].split(';').length} sent]` : '';
+
   if (ct.includes('application/json')) {
     let j;
     try { j = await res.json(); } catch { j = await res.text(); }
     const out = typeof j === 'string' ? j : JSON.stringify(j, null, 2);
-    return { content: out.slice(0, max_chars) + (out.length > max_chars ? '\n[truncated]' : '') };
+    return { content: out.slice(0, max_chars) + (out.length > max_chars ? '\n[truncated]' : '') + cookieNote };
   }
   if (ct.startsWith('text/') || ct.includes('xml') || ct.includes('html')) {
     let html = await res.text();
     if (ct.includes('html')) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      // Strip scripts/styles
       doc.querySelectorAll('script, style, noscript, iframe').forEach((n) => n.remove());
       const txt = (doc.body?.innerText || doc.body?.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
-      return { content: txt.slice(0, max_chars) + (txt.length > max_chars ? '\n[truncated]' : '') };
+      return { content: txt.slice(0, max_chars) + (txt.length > max_chars ? '\n[truncated]' : '') + cookieNote };
     }
-    return { content: html.slice(0, max_chars) + (html.length > max_chars ? '\n[truncated]' : '') };
+    return { content: html.slice(0, max_chars) + (html.length > max_chars ? '\n[truncated]' : '') + cookieNote };
   }
   return { is_error: true, content: `Unsupported content-type: ${ct}` };
 }
@@ -4501,4 +4631,243 @@ function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// =====================================================================
+// WATCH ELEMENT — MutationObserver-based, more efficient than polling
+// =====================================================================
+
+async function tool_watchElement({ selector, change = 'appear', timeout_ms = 10000, tab_id }) {
+  if (!selector) return { is_error: true, content: 'selector is required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  const result = await execIsolated(tab.id, async (sel, changeType, timeoutMs) => {
+    const refMap = window.__claudeRefs__ || {};
+    const refMatch = sel.match(/^#ref-(\d+)$/);
+    const initial = refMatch ? refMap[refMatch[1]] : document.querySelector(sel);
+    const querySel = () => refMatch ? refMap[refMatch[1]] : document.querySelector(sel);
+
+    return new Promise((resolve) => {
+      const start = Date.now();
+      let timer;
+
+      const finish = (status, detail) => {
+        clearTimeout(timer);
+        if (observer) observer.disconnect();
+        const elapsed = Date.now() - start;
+        resolve({ status, detail, elapsed_ms: elapsed });
+      };
+
+      // Quick check before observer
+      const current = querySel();
+      if (changeType === 'appear' && current) {
+        return finish('matched', 'element already present');
+      }
+      if (changeType === 'disappear' && !current) {
+        return finish('matched', 'element already absent');
+      }
+
+      const initialText = initial?.textContent || '';
+      const initialAttrs = initial ? [...initial.attributes].map(a => `${a.name}=${a.value}`).join(';') : '';
+
+      const observer = new MutationObserver(() => {
+        const cur = querySel();
+        if (changeType === 'appear' && cur) finish('matched', 'element appeared');
+        else if (changeType === 'disappear' && !cur) finish('matched', 'element removed');
+        else if (changeType === 'text_change' && cur && cur.textContent !== initialText) {
+          finish('matched', `text changed: "${initialText.slice(0, 60)}" → "${(cur.textContent || '').slice(0, 60)}"`);
+        }
+        else if (changeType === 'attribute_change' && cur) {
+          const newAttrs = [...cur.attributes].map(a => `${a.name}=${a.value}`).join(';');
+          if (newAttrs !== initialAttrs) finish('matched', 'attributes changed');
+        }
+      });
+
+      observer.observe(document.body, {
+        childList: true, subtree: true, characterData: true, attributes: true,
+      });
+
+      timer = setTimeout(() => finish('timeout', `no ${changeType} within ${timeoutMs}ms`), timeoutMs);
+    });
+  }, [selector, change, timeout_ms]);
+
+  if (!result) return { is_error: true, content: 'watch_element returned nothing.' };
+  if (result.status === 'matched') {
+    return { content: `✓ ${result.detail} (${result.elapsed_ms}ms)` };
+  }
+  return { content: `⏱ ${result.detail}` };
+}
+
+// =====================================================================
+// CDP KEY — real isTrusted=true keyboard events
+// =====================================================================
+
+async function tool_cdpKey({ text, tab_id }) {
+  if (!text) return { is_error: true, content: 'text is required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  // Determine: is this a key combo or plain text?
+  const isComboLike = /^[A-Z][a-zA-Z]*$|[+\-]/.test(text) && text.length < 30 && !/\s/.test(text);
+
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+  } catch (e) {
+    if (!e.message.includes('already attached')) {
+      return { is_error: true, content: `CDP attach failed: ${e.message}` };
+    }
+  }
+
+  try {
+    if (isComboLike && (text.includes('+') || /^[A-Z]/.test(text))) {
+      // Parse combo: "ctrl+shift+a" or "Enter"
+      const parts = text.split('+').map(p => p.trim());
+      const key = parts[parts.length - 1];
+      const modifiers = parts.slice(0, -1).map(m => m.toLowerCase());
+      let mod = 0;
+      if (modifiers.includes('alt')) mod |= 1;
+      if (modifiers.includes('ctrl') || modifiers.includes('control')) mod |= 2;
+      if (modifiers.includes('meta') || modifiers.includes('cmd') || modifiers.includes('super')) mod |= 4;
+      if (modifiers.includes('shift')) mod |= 8;
+
+      const keyMap = {
+        'Enter': { code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13 },
+        'Tab': { code: 'Tab', key: 'Tab', windowsVirtualKeyCode: 9 },
+        'Escape': { code: 'Escape', key: 'Escape', windowsVirtualKeyCode: 27 },
+        'Backspace': { code: 'Backspace', key: 'Backspace', windowsVirtualKeyCode: 8 },
+        'Delete': { code: 'Delete', key: 'Delete', windowsVirtualKeyCode: 46 },
+        'ArrowUp': { code: 'ArrowUp', key: 'ArrowUp', windowsVirtualKeyCode: 38 },
+        'ArrowDown': { code: 'ArrowDown', key: 'ArrowDown', windowsVirtualKeyCode: 40 },
+        'ArrowLeft': { code: 'ArrowLeft', key: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+        'ArrowRight': { code: 'ArrowRight', key: 'ArrowRight', windowsVirtualKeyCode: 39 },
+        'Home': { code: 'Home', key: 'Home', windowsVirtualKeyCode: 36 },
+        'End': { code: 'End', key: 'End', windowsVirtualKeyCode: 35 },
+        'PageUp': { code: 'PageUp', key: 'PageUp', windowsVirtualKeyCode: 33 },
+        'PageDown': { code: 'PageDown', key: 'PageDown', windowsVirtualKeyCode: 34 },
+        'Space': { code: 'Space', key: ' ', windowsVirtualKeyCode: 32 },
+      };
+
+      let keyInfo;
+      if (keyMap[key]) {
+        keyInfo = keyMap[key];
+      } else if (key.length === 1) {
+        const upper = key.toUpperCase();
+        keyInfo = {
+          code: 'Key' + upper,
+          key: key.toLowerCase(),
+          windowsVirtualKeyCode: upper.charCodeAt(0),
+        };
+      } else {
+        return { is_error: true, content: `Unknown key: ${key}` };
+      }
+
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchKeyEvent', {
+        type: 'keyDown', modifiers: mod, ...keyInfo,
+      });
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchKeyEvent', {
+        type: 'keyUp', modifiers: mod, ...keyInfo,
+      });
+      return { content: `✓ CDP key: ${text}` };
+    }
+
+    // Plain text — type each char with Input.insertText
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.insertText', { text });
+    return { content: `✓ CDP typed ${text.length} chars (isTrusted=true)` };
+  } catch (e) {
+    return { is_error: true, content: `CDP key error: ${e.message}` };
+  }
+}
+
+// =====================================================================
+// READ-ONLY MODE
+// =====================================================================
+
+const _READONLY_KEY = 'moonbridge_readonly';
+
+async function tool_setReadonly({ enabled }) {
+  if (typeof enabled !== 'boolean') return { is_error: true, content: 'enabled boolean required.' };
+  await chrome.storage.local.set({ [_READONLY_KEY]: enabled });
+  return { content: enabled
+    ? '🔒 Read-only mode ENABLED. Click/type/navigate tools will be blocked.'
+    : '🔓 Read-only mode disabled.' };
+}
+
+async function _isReadonly() {
+  try {
+    const { [_READONLY_KEY]: r } = await chrome.storage.local.get([_READONLY_KEY]);
+    return !!r;
+  } catch { return false; }
+}
+
+// =====================================================================
+// STABLE REFS — survive across get_page calls
+// =====================================================================
+
+async function tool_stableRef({ selector, tab_id }) {
+  if (!selector) return { is_error: true, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  const result = await execIsolated(tab.id, (sel) => {
+    const refMap = window.__claudeRefs__ || {};
+    const refMatch = sel.match(/^#ref-(\d+)$/);
+    const el = refMatch ? refMap[refMatch[1]] : document.querySelector(sel);
+    if (!el) return { ok: false, error: 'element not found' };
+
+    // Build a stable selector: tag + id + classes + nth-of-type + text
+    const tag = el.tagName.toLowerCase();
+    const id = el.id ? `#${CSS.escape(el.id)}` : '';
+    const cls = el.className && typeof el.className === 'string'
+      ? '.' + el.className.trim().split(/\s+/).filter(c => c && !c.startsWith('moonbridge-')).slice(0, 2).map(c => CSS.escape(c)).join('.')
+      : '';
+    let stableSel = tag + id + cls;
+
+    // If not unique, add nth-of-type
+    try {
+      const matches = document.querySelectorAll(stableSel);
+      if (matches.length > 1) {
+        const parent = el.parentElement;
+        if (parent) {
+          const siblings = [...parent.children].filter(c => c.tagName === el.tagName);
+          const idx = siblings.indexOf(el) + 1;
+          stableSel = `${stableSel}:nth-of-type(${idx})`;
+        }
+      }
+    } catch {}
+
+    // Persist in stable map
+    window.__claudeStableRefs__ = window.__claudeStableRefs__ || {};
+    const id_n = Object.keys(window.__claudeStableRefs__).length + 1;
+    const stableId = `$stable-${id_n}`;
+    window.__claudeStableRefs__[stableId] = { selector: stableSel, captured_at: Date.now() };
+
+    const text = (el.innerText || el.textContent || '').slice(0, 60).trim();
+    return { ok: true, stableId, selector: stableSel, text };
+  }, [selector]);
+
+  if (!result?.ok) {
+    return { is_error: true, content: result?.error || 'stable_ref failed.' };
+  }
+  return {
+    content: `✓ Stable selector for "${result.text}":\n   ${result.selector}\n\n` +
+             `Use this CSS selector instead of #ref-N — it survives across get_page calls and DOM updates (as long as the element's tag/id/class don't change).`
+  };
+}
+
+// =====================================================================
+// TAB GROUP
+// =====================================================================
+
+async function tool_groupTabs({ tab_ids, title, color = 'orange' }) {
+  if (!Array.isArray(tab_ids) || !tab_ids.length) {
+    return { is_error: true, content: 'tab_ids array required.' };
+  }
+  try {
+    const groupId = await chrome.tabs.group({ tabIds: tab_ids });
+    await chrome.tabGroups.update(groupId, { title: title || 'MoonBridge', color });
+    return { content: `✓ Grouped ${tab_ids.length} tabs as "${title || 'MoonBridge'}" (${color}).` };
+  } catch (e) {
+    return { is_error: true, content: `group_tabs error: ${e.message}` };
+  }
 }
