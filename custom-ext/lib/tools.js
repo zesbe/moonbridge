@@ -463,6 +463,80 @@ export const ALL_TOOLS = [
     },
   },
   {
+    name: 'parallel_task',
+    description: 'Run multiple independent tool calls CONCURRENTLY (Promise.all). Best for: read 5 tabs, screenshot 3 pages, fetch_url multiple endpoints. Order does not matter. Each step is {tool, input}. Returns all results with per-step duration.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              tool: { type: 'string' },
+              input: { type: 'object' },
+            },
+            required: ['tool'],
+          },
+        },
+        return_full: { type: 'boolean', description: 'Return full content per step instead of truncated. Default false.' },
+      },
+      required: ['steps'],
+    },
+  },
+  {
+    name: 'execute_plan',
+    description: 'Multi-step plan executor with intermediate context passing. Same as batch BUT step inputs can reference prior step results via "${steps[N].content}" syntax. Use for "navigate then click then verify" chains where step 2 depends on step 1\'s URL.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              tool: { type: 'string' },
+              input: { type: 'object' },
+            },
+            required: ['tool'],
+          },
+        },
+        stop_on_failure: { type: 'boolean', description: 'Default true.' },
+        return_intermediate: { type: 'boolean', description: 'Show full output per step (default false: just summaries).' },
+      },
+      required: ['steps'],
+    },
+  },
+  {
+    name: 'iframe_query',
+    description: 'Operate INSIDE a specific iframe via chrome.scripting frameIds. Use list_frames first to find frame_id. Bypasses cross-origin restrictions for same-tab iframes (Oracle Cloud Console, GSC, embedded forms). Actions: read | click | type | find_by_text.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        frame_id: { type: 'integer', description: 'Required. Get from list_frames.' },
+        action: { type: 'string', enum: ['read', 'click', 'type', 'find_by_text'], description: 'Default read.' },
+        selector: { type: 'string', description: 'For click/type: CSS selector inside the frame.' },
+        text: { type: 'string', description: 'For type: value to enter. For find_by_text: query.' },
+        max_chars: { type: 'integer', description: 'Default 3000. For read.' },
+      },
+      required: ['frame_id'],
+    },
+  },
+  {
+    name: 'vision_query',
+    description: 'Screenshot + ask vision model a question. Last-resort visual reasoning when DOM is empty (canvas, charts, OCR-heavy UIs, image-only pages). Uses configured Anthropic-compatible endpoint. Returns natural language answer.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        question: { type: 'string', description: 'Natural language question about the screenshot.' },
+        max_chars: { type: 'integer', description: 'Max answer length (default 1500).' },
+      },
+      required: ['question'],
+    },
+  },
+  {
     name: 'page_summary',
     description: 'Compact version of get_page: only landmarks (headings, main inputs, primary buttons, navigation), much smaller than full text. Use to quickly orient on a page.',
     input_schema: {
@@ -2180,6 +2254,10 @@ export async function executeTool(name, input, ctx = {}) {
       case 'close_window':   return wrap(await tool_closeWindow(input || {}));
       case 'move_tab':       return wrap(await tool_moveTab(input || {}));
       case 'batch':          return wrap(await tool_batch(input || {}, ctx));
+      case 'parallel_task':  return wrap(await tool_parallelTask(input || {}, ctx));
+      case 'execute_plan':   return wrap(await tool_executePlan(input || {}, ctx));
+      case 'iframe_query':   return wrap(await tool_iframeQuery(input || {}));
+      case 'vision_query':   return wrap(await tool_visionQuery(input || {}));
       case 'page_summary':   return wrap(await tool_pageSummary(input || {}));
       case 'scroll_until':   return wrap(await tool_scrollUntil(input || {}));
       case 'dom_snapshot':   return wrap(await tool_domSnapshot(input || {}));
@@ -4417,6 +4495,216 @@ async function tool_batch({ steps, continue_on_error = false }, ctx) {
   }
   lines.push(`---DONE: ${okCount} ok, ${errCount} err---`);
   return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// PARALLEL TASK — run multiple independent tool calls concurrently
+// Uses Promise.all so all steps fire at once. Returns full results
+// (NOT truncated like batch). Best for: read 5 tabs, screenshot 3
+// pages, fetch_url multiple endpoints — anything where order doesn't
+// matter and steps don't depend on each other.
+// =====================================================================
+
+async function tool_parallelTask({ steps, return_full = false }, ctx) {
+  if (!Array.isArray(steps) || !steps.length) return { is_error: true, content: 'steps[] required.' };
+  const t0 = Date.now();
+  const results = await Promise.all(steps.map(async (s, i) => {
+    if (!s?.tool) return { i, error: 'missing tool name' };
+    const start = Date.now();
+    try {
+      const r = await executeTool(s.tool, s.input || {}, ctx || {});
+      if (r._dataUrl) delete r._dataUrl;
+      const txt = typeof r.content === 'string' ? r.content : JSON.stringify(r.content);
+      return { i, tool: s.tool, ok: !r.is_error, durationMs: Date.now() - start,
+               content: return_full ? txt : txt.slice(0, 400),
+               error: r.is_error ? txt.slice(0, 200) : null };
+    } catch (e) {
+      return { i, tool: s.tool, ok: false, durationMs: Date.now() - start, error: e.message };
+    }
+  }));
+  const totalMs = Date.now() - t0;
+  const okCount = results.filter((r) => r.ok).length;
+  return { content: `---PARALLEL (${steps.length} steps in ${totalMs}ms, ${okCount} ok)---\n` +
+                    JSON.stringify(results, null, 2) };
+}
+
+// =====================================================================
+// EXECUTE PLAN — multi-step plan with intermediate context passing
+// Same as batch BUT step inputs can reference prior step results via
+// ${steps[N].content} syntax. Useful for "navigate then click then verify"
+// chains where step 2 depends on step 1's URL.
+// =====================================================================
+
+async function tool_executePlan({ steps, stop_on_failure = true, return_intermediate = false }, ctx) {
+  if (!Array.isArray(steps) || !steps.length) return { is_error: true, content: 'steps[] required.' };
+  const lines = [`---EXECUTE PLAN (${steps.length} steps)---`];
+  const stepResults = [];
+  let okCount = 0, errCount = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    if (!s?.tool) {
+      lines.push(`[${i}] ✕ missing tool name`); errCount++;
+      stepResults.push({ ok: false, error: 'missing tool' });
+      if (stop_on_failure) break; continue;
+    }
+    // Variable substitution in input — replace ${steps[N].content} with prior result
+    let resolvedInput = s.input || {};
+    try {
+      const inputStr = JSON.stringify(resolvedInput);
+      const replaced = inputStr.replace(/\$\{steps\[(\d+)\]\.content\}/g, (_, idx) => {
+        const r = stepResults[parseInt(idx, 10)];
+        return r?.content ? r.content.replace(/"/g, '\\"').slice(0, 500) : '';
+      });
+      resolvedInput = JSON.parse(replaced);
+    } catch {}
+    const t0 = Date.now();
+    let r;
+    try { r = await executeTool(s.tool, resolvedInput, ctx || {}); }
+    catch (e) { r = { is_error: true, content: 'crash: ' + e.message }; }
+    const dur = Date.now() - t0;
+    if (r._dataUrl) delete r._dataUrl;
+    const txt = typeof r.content === 'string' ? r.content : JSON.stringify(r.content);
+    stepResults.push({ ok: !r.is_error, content: txt, durationMs: dur });
+    if (r.is_error) {
+      errCount++;
+      lines.push(`[${i}] ✕ ${s.tool} (${dur}ms): ${txt.slice(0, 200)}`);
+      if (stop_on_failure) break;
+    } else {
+      okCount++;
+      lines.push(`[${i}] ✓ ${s.tool} (${dur}ms): ${return_intermediate ? txt.slice(0, 300) : txt.slice(0, 80)}`);
+    }
+  }
+  lines.push(`---DONE: ${okCount} ok, ${errCount} err---`);
+  return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// IFRAME QUERY — operate inside specific iframe via CDP
+// Bypasses cross-origin restrictions by using chrome.scripting.executeScript
+// with frameIds parameter. Reads/clicks within the frame's document context.
+// =====================================================================
+
+async function tool_iframeQuery({ tab_id, frame_id, action, selector, text, max_chars = 3000 }) {
+  if (!frame_id && frame_id !== 0) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+                                              content: 'frame_id required (use list_frames first to find it).' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  const op = (action || 'read').toLowerCase();
+  let func, args;
+  if (op === 'read' || op === 'get_page') {
+    func = (cap) => {
+      const text = (document.body?.innerText || '').slice(0, cap);
+      const buttons = [...document.querySelectorAll('button, a, input[type=submit]')].slice(0, 30).map((el) => ({
+        tag: el.tagName.toLowerCase(),
+        label: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 60),
+      }));
+      return { url: location.href, title: document.title, text, buttons };
+    };
+    args = [max_chars];
+  } else if (op === 'click') {
+    if (!selector) return { is_error: true, content: 'selector required for click action.' };
+    func = (sel) => {
+      try {
+        const el = document.querySelector(sel);
+        if (!el) return { ok: false, error: 'not found' };
+        el.scrollIntoView({ block: 'center' });
+        el.click();
+        return { ok: true, label: (el.innerText || el.value || '').slice(0, 60) };
+      } catch (e) { return { ok: false, error: e.message }; }
+    };
+    args = [selector];
+  } else if (op === 'type') {
+    if (!selector || text == null) return { is_error: true, content: 'selector + text required for type.' };
+    func = (sel, t) => {
+      try {
+        const el = document.querySelector(sel);
+        if (!el) return { ok: false, error: 'not found' };
+        el.focus();
+        el.value = t;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true };
+      } catch (e) { return { ok: false, error: e.message }; }
+    };
+    args = [selector, text];
+  } else if (op === 'find_by_text') {
+    if (!text) return { is_error: true, content: 'text required for find_by_text.' };
+    func = (q) => {
+      const all = [...document.querySelectorAll('button, a, input, [role=button]')];
+      const lq = q.toLowerCase();
+      const matches = all.filter((el) => {
+        const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').toLowerCase();
+        return label.includes(lq);
+      }).slice(0, 10);
+      return matches.map((el) => ({
+        tag: el.tagName.toLowerCase(),
+        label: (el.innerText || el.value || '').slice(0, 60),
+        selector: el.id ? `#${el.id}` : el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : el.tagName.toLowerCase(),
+      }));
+    };
+    args = [text];
+  } else {
+    return { is_error: true, content: `Unknown action: ${action}. Use: read, click, type, find_by_text.` };
+  }
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [frame_id] },
+      func, args,
+    });
+    return { content: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { is_error: true, content: `iframe_query failed: ${e.message}` };
+  }
+}
+
+// =====================================================================
+// VISION QUERY — screenshot + ask question via Anthropic vision
+// Last-resort visual reasoning when DOM is empty (canvas, charts, OCR-y UI).
+// Uses settings.baseUrl + apiToken from extension storage to call /messages.
+// =====================================================================
+
+async function tool_visionQuery({ tab_id, question, max_chars = 1500 }) {
+  if (!question) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'question required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  // Capture screenshot
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  const m = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+  if (!m) return { is_error: true, content: 'Capture failed.' };
+  // Get API config
+  const { settings = {} } = await chrome.storage.local.get(['settings']);
+  if (!settings.apiToken || !settings.baseUrl) {
+    return { is_error: true, content: 'API not configured. Open Settings first.' };
+  }
+  const url = settings.baseUrl.replace(/\/$/, '') + '/messages';
+  const model = settings.defaultModel || 'kr/claude-sonnet-4.5';
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': settings.apiToken,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+            { type: 'text', text: `Look at this screenshot and answer: ${question}\n\nAnswer concisely (under ${max_chars} chars).` },
+          ],
+        }],
+      }),
+    });
+    if (!res.ok) return { is_error: true, content: `Vision API error: ${res.status}` };
+    const data = await res.json();
+    const answer = data?.content?.[0]?.text || JSON.stringify(data).slice(0, 500);
+    return { content: answer.slice(0, max_chars), _dataUrl: dataUrl };
+  } catch (e) {
+    return { is_error: true, content: `vision_query failed: ${e.message}` };
+  }
 }
 
 // =====================================================================

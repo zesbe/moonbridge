@@ -782,6 +782,140 @@
     }
   },
   {
+    "name": "parallel_task",
+    "description": "Run multiple independent tool calls CONCURRENTLY (Promise.all). Best for: read 5 tabs, screenshot 3 pages, fetch_url multiple endpoints. Order does not matter. Each step is {tool, input}. Returns all results with per-step duration.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        "return_full": {
+          "type": "boolean",
+          "description": "Return full content per step instead of truncated. Default false."
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
+    "name": "execute_plan",
+    "description": "Multi-step plan executor with intermediate context passing. Same as batch BUT step inputs can reference prior step results via \"${steps[N].content}\" syntax. Use for \"navigate then click then verify\" chains where step 2 depends on step 1's URL.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        "stop_on_failure": {
+          "type": "boolean",
+          "description": "Default true."
+        },
+        "return_intermediate": {
+          "type": "boolean",
+          "description": "Show full output per step (default false: just summaries)."
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
+    "name": "iframe_query",
+    "description": "Operate INSIDE a specific iframe via chrome.scripting frameIds. Use list_frames first to find frame_id. Bypasses cross-origin restrictions for same-tab iframes (Oracle Cloud Console, GSC, embedded forms). Actions: read | click | type | find_by_text.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "frame_id": {
+          "type": "integer",
+          "description": "Required. Get from list_frames."
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "read",
+            "click",
+            "type",
+            "find_by_text"
+          ],
+          "description": "Default read."
+        },
+        "selector": {
+          "type": "string",
+          "description": "For click/type: CSS selector inside the frame."
+        },
+        "text": {
+          "type": "string",
+          "description": "For type: value to enter. For find_by_text: query."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 3000. For read."
+        }
+      },
+      "required": [
+        "frame_id"
+      ]
+    }
+  },
+  {
+    "name": "vision_query",
+    "description": "Screenshot + ask vision model a question. Last-resort visual reasoning when DOM is empty (canvas, charts, OCR-heavy UIs, image-only pages). Uses configured Anthropic-compatible endpoint. Returns natural language answer.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "question": {
+          "type": "string",
+          "description": "Natural language question about the screenshot."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Max answer length (default 1500)."
+        }
+      },
+      "required": [
+        "question"
+      ]
+    }
+  },
+  {
     "name": "page_summary",
     "description": "Compact version of get_page: only landmarks (headings, main inputs, primary buttons, navigation), much smaller than full text. Use to quickly orient on a page.",
     "input_schema": {

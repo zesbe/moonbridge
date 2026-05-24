@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "2.1.0",
-  "description": "Smart browser automation agent — 155 tools, SPA-aware (dom_stable_ms), toast/modal handlers, self-healing selectors, task_context auto-injection, iframe patterns, smart agent doctrine",
+  "version": "2.2.0",
+  "description": "Smart browser automation agent — 159 tools, execute_plan + parallel_task + iframe_query + vision_query, SPA-aware, self-healing, auto memory discipline",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
