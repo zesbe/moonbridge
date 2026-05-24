@@ -2126,6 +2126,7 @@ body {
      max-height was clamping the image height when scrolled inside
      .batch-body and made Chat 2 preview invisible. */
   animation: inline-preview-in 360ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
+  transition: max-height 320ms var(--ease), margin 320ms var(--ease), opacity 320ms var(--ease);
 }
 @keyframes inline-preview-in {
   0%   { opacity: 0; transform: translateY(-6px) scale(0.97); }
@@ -2156,6 +2157,46 @@ body {
     0 8px 26px rgba(0, 0, 0, 0.42),
     0 0 0 5px rgba(217, 119, 87, 0.12);
 }
+
+/* Completed state — shrink preview to a compact thumbnail so the
+   timeline doesn't get dominated by full-size screenshots after the
+   task is done. User can still hover to enlarge or click to zoom. */
+.activity-item.completed .action-inline-preview {
+  margin-top: 5px;
+  margin-bottom: 2px;
+}
+.activity-item.completed .action-inline-preview-img {
+  max-height: 120px;
+  max-width: 220px;
+  border-radius: 6px;
+  opacity: 0.78;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 2px 8px rgba(0, 0, 0, 0.20),
+    0 0 0 2px rgba(255, 255, 255, 0.02);
+}
+.activity-item.completed .action-inline-preview-img:hover {
+  max-height: 320px;
+  max-width: 100%;
+  opacity: 1;
+  transform: scale(1);
+  border-color: rgba(217, 119, 87, 0.30);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 4px 14px rgba(0, 0, 0, 0.32),
+    0 0 0 4px rgba(217, 119, 87, 0.10);
+}
+
+/* Failed state keeps preview full-size so user can inspect what failed */
+.activity-item.failed .action-inline-preview-img {
+  border-color: rgba(231, 76, 60, 0.30);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 4px 16px rgba(0, 0, 0, 0.30),
+    0 0 0 4px rgba(231, 76, 60, 0.10);
+}
+
 @media (prefers-color-scheme: light) {
   .action-inline-preview-img {
     background: rgba(0, 0, 0, 0.04);
