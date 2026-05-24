@@ -296,7 +296,7 @@ function renderHistory(filter = '') {
       meta.className = 'history-item-meta';
       meta.innerHTML = `<span>${formatDate(c.updatedAt)}</span><span>${countTurns(c.conversation)} turns</span>`;
 
-      // Inline rename action (hover to reveal)
+      // Inline rename + delete actions (hover to reveal)
       const actions = document.createElement('div');
       actions.className = 'history-item-actions';
       const renameBtn = document.createElement('button');
@@ -307,7 +307,16 @@ function renderHistory(filter = '') {
         e.stopPropagation();
         startRenameChat(c, span);
       });
+      const delBtn = document.createElement('button');
+      delBtn.className = 'history-item-action danger';
+      delBtn.title = 'Delete';
+      delBtn.textContent = '🗑';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteHistoryChat(c);
+      });
       actions.appendChild(renameBtn);
+      actions.appendChild(delBtn);
 
       row.appendChild(title);
       row.appendChild(meta);
@@ -316,6 +325,19 @@ function renderHistory(filter = '') {
       historyList.appendChild(row);
     }
   }
+}
+
+async function deleteHistoryChat(chat) {
+  if (!chat?.id) return;
+  if (!confirm(`Delete "${chat.title || 'Untitled'}"?\nThis can't be undone.`)) return;
+  savedChats = savedChats.filter((c) => c.id !== chat.id);
+  if (currentChatId === chat.id) {
+    currentChatId = null;
+    conversation = [];
+    renderConversation();
+  }
+  await persistChats();
+  renderHistory(historySearch.value || '');
 }
 
 function startRenameChat(chat, labelEl) {

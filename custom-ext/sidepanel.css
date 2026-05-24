@@ -405,6 +405,11 @@ body {
   border-color: var(--border);
   color: var(--text);
 }
+.history-item-action.danger:hover {
+  background: rgba(231, 76, 60, 0.10);
+  border-color: rgba(231, 76, 60, 0.35);
+  color: var(--error);
+}
 .history-rename-input {
   background: var(--bg-elev);
   border: 1px solid var(--accent);
