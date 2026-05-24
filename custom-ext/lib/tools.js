@@ -8,15 +8,15 @@ export const ALL_TOOLS = [
   // ===== Reading =====
   {
     name: 'get_page',
-    description: 'Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus="main" trims sidebar/recommendation noise on YouTube/Twitter/GitHub.',
+    description: 'Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus="main" trims sidebar/recommendation noise on YouTube/Twitter/GitHub. focus="player" on YouTube /watch returns player + title + metadata only.',
     input_schema: {
       type: 'object',
       properties: {
         max_chars: { type: 'integer', description: 'Max chars of text (default 4000).' },
         tab_id: { type: 'integer', description: 'Optional tab id. Default = active tab.' },
         full: { type: 'boolean', description: 'Include all elements, not just visible (default false).' },
-        focus: { type: 'string', enum: ['auto', 'main', 'main-content', 'focused', 'full-page'],
-                 description: 'auto (default) — main-content for SPAs, full-page elsewhere. main / main-content / focused — primary content only (drops sidebar). full-page — entire body.' },
+        focus: { type: 'string', enum: ['auto', 'main', 'main-content', 'focused', 'player', 'full-page'],
+                 description: 'auto (default) — main-content for SPAs, full-page elsewhere. main / focused — primary content (drops sidebar). player — YouTube /watch player+metadata only. full-page — entire body.' },
       },
     },
   },
@@ -846,6 +846,17 @@ export const ALL_TOOLS = [
     name: 'list_chat_attachments',
     description: 'List files/images the user attached in the most recent message of this conversation. Returns [{index, filename, mime, size, kind}]. Use before get_chat_attachment / upload_image(attachment_index=...).',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'media_state',
+    description: 'Detect and read state of <video> and <audio> elements on the page. Returns array of {tag, src, paused, current_time, duration, muted, volume, playback_rate, autoplay, ended, ready_state, network_state, buffered_ranges}. Use this instead of execute_js to verify whether YouTube/Spotify/podcast is actually playing. Bypasses Trusted Types since it doesn\'t eval strings.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer', description: 'Default = active tab.' },
+        play_if_paused: { type: 'boolean', description: 'If a media element is paused, attempt to .play() it (workaround for autoplay throttling). Default false.' },
+      },
+    },
   },
   {
     name: 'get_chat_attachment',
@@ -2180,6 +2191,7 @@ export async function executeTool(name, input, ctx = {}) {
       case 'upload_image':   return wrap(await tool_uploadImage(input || {}, ctx));
       case 'list_chat_attachments': return wrap(await tool_listChatAttachments({}, ctx));
       case 'get_chat_attachment':   return wrap(await tool_getChatAttachment(input || {}, ctx));
+      case 'media_state':           return wrap(await tool_mediaState(input || {}));
       case 'update_plan':    return wrap(await tool_updatePlan(input || {}, ctx));
       case 'gif_capture':    return wrap(await tool_gifCapture(input || {}));
       case 'ocr_image':      return wrap(await tool_ocrImage(input || {}, ctx));
@@ -2245,7 +2257,7 @@ async function needsApproval(name, input, ctx) {
 // READING TOOLS
 // =====================================================================
 
-async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_shadow = true, focus = 'auto' }) {
+async function tool_getPage({ max_chars = 4000, tab_id, full = false, include_shadow = true, focus = 'auto' }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) {
     return { is_error: true, error_code: ERR_CODES.RESTRICTED,
@@ -2265,11 +2277,14 @@ async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_sh
 
   // Explicit truncation flag — addresses AI feedback "agent kadang tidak sadar isinya terpotong"
   if (snap.text_truncated) {
-    lines.push(`⚠ TRUNCATED: showing ${snap.text_chars} of ${snap.total_chars} chars (${Math.round(snap.text_chars / snap.total_chars * 100)}%). ` +
-               `Re-call with max_chars=${Math.min(snap.total_chars, 20000)} to see more.`);
+    const pct = Math.round(snap.text_chars / snap.total_chars * 100);
+    lines.push(`⚠ TRUNCATED: ${snap.text_chars} / ${snap.total_chars} chars (${pct}%). ` +
+               `For more text: re-call with max_chars=${Math.min(snap.total_chars, 20000)}. ` +
+               `For SPECIFIC content: use find_element(query) — way faster than dumping whole page.`);
   }
   if (snap.elements_truncated) {
-    lines.push(`⚠ ELEMENTS TRUNCATED: showing ${snap.elements?.length || 0} of ${snap.total_elements}. Use find_element to search the rest.`);
+    lines.push(`⚠ ELEMENTS TRUNCATED: showing ${snap.elements?.length || 0} of ${snap.total_elements}. ` +
+               `Use find_element(query) to search by text/label, or focus="main" / "player" to drop sidebar noise.`);
   }
   if (snap.elements_deduped) {
     lines.push(`ℹ DEDUPED: removed ${snap.elements_deduped} duplicate / repeated sibling element(s).`);
@@ -2340,7 +2355,33 @@ function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
     }
     return { root: document.body, label: 'full-page', selector: '' };
   }
-  if (focus === 'main' || focus === 'main-content' || focus === 'focused') {
+  if (focus === 'player') {
+    // YouTube /watch only — title + player + metadata, drops sidebar entirely.
+    const playerSels = [
+      '#movie_player',
+      'ytd-watch-flexy #primary-inner',
+      'ytd-watch-flexy #above-the-fold',
+      'ytd-watch-flexy ytd-watch-metadata',
+    ];
+    let pickedRoots = [];
+    for (const s of playerSels) {
+      try {
+        const el = document.querySelector(s);
+        if (el && el.offsetHeight > 30) pickedRoots.push({ el, sel: s });
+      } catch {}
+    }
+    if (pickedRoots.length) {
+      // Use the largest matched container as the focusRoot
+      pickedRoots.sort((a, b) => b.el.offsetHeight - a.el.offsetHeight);
+      focusRoot = pickedRoots[0].el;
+      focusUsed = 'player';
+      focusSelector = pickedRoots[0].sel;
+    } else {
+      // Fallback to main if player markers absent (not on a /watch page)
+      const f = pickFocus('main');
+      focusRoot = f.root; focusUsed = f.label + ' (player→main fallback)'; focusSelector = f.selector;
+    }
+  } else if (focus === 'main' || focus === 'main-content' || focus === 'focused') {
     const f = pickFocus('main');
     focusRoot = f.root; focusUsed = f.label; focusSelector = f.selector;
   } else if (focus === 'auto') {
@@ -2969,13 +3010,22 @@ function fillFormInPage(fields, submit) {
     const t = (f.type || '').toLowerCase();
     try {
       if (t === 'check' || t === 'checkbox') {
-        const desired = !!f.value && f.value !== 'false' && f.value !== 'no' && f.value !== '0';
+        // Accept boolean true, missing value (default check ON), or string flags.
+        // Old behavior required string "true" — annoying for the model.
+        let desired;
+        if (f.value === undefined || f.value === null) desired = true;
+        else if (typeof f.value === 'boolean') desired = f.value;
+        else {
+          const s = String(f.value).toLowerCase();
+          desired = !(s === 'false' || s === 'no' || s === '0' || s === 'off' || s === '');
+        }
         const r = setRadioOrCheck(el, 'check', desired);
         if (!r.ok) {
           errors.push(`${f.selector}: checkbox not toggled (before=${r.before}, after=${r.after})`);
           continue;
         }
       } else if (t === 'radio') {
+        // Radio always selects (value optional, ignored)
         const r = setRadioOrCheck(el, 'radio', true);
         if (!r.ok) {
           errors.push(`${f.selector}: radio not selected (after=${r.after})`);
@@ -5255,6 +5305,101 @@ async function tool_getChatAttachment({ index = 0 }, ctx = {}) {
 }
 
 // =====================================================================
+// MEDIA STATE
+// Detects <video> / <audio> on the page and returns play state without
+// touching execute_js (avoids Trusted Types blocks on YouTube/Google).
+// Uses chrome.scripting.executeScript directly via execIsolated.
+// =====================================================================
+
+async function tool_mediaState({ tab_id, play_if_paused = false }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, mediaStateInPage, [!!play_if_paused]);
+  if (!r) return { content: 'No media elements detected.' };
+  if (!r.media?.length) return { content: 'No <video>/<audio> elements found on this page.' };
+  return { content: JSON.stringify(r, null, 2) };
+}
+
+function mediaStateInPage(playIfPaused) {
+  const out = [];
+  // Walk light DOM + open shadow DOM (YouTube uses shadow for some players)
+  function* walk(root) {
+    const stack = [root];
+    while (stack.length) {
+      const n = stack.pop();
+      if (!n) continue;
+      yield n;
+      if (n.shadowRoot) {
+        for (const c of n.shadowRoot.children) stack.push(c);
+      }
+      if (n.children) {
+        for (let i = n.children.length - 1; i >= 0; i--) stack.push(n.children[i]);
+      }
+    }
+  }
+  const elements = [];
+  for (const node of walk(document.body || document.documentElement)) {
+    if (node?.tagName === 'VIDEO' || node?.tagName === 'AUDIO') {
+      elements.push(node);
+    }
+  }
+  let playAttempts = [];
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
+    const buffered = [];
+    try {
+      for (let b = 0; b < el.buffered.length; b++) {
+        buffered.push([el.buffered.start(b), el.buffered.end(b)]);
+      }
+    } catch {}
+    const info = {
+      index: i,
+      tag: el.tagName.toLowerCase(),
+      src: el.currentSrc || el.src || null,
+      paused: !!el.paused,
+      ended: !!el.ended,
+      current_time: Number(el.currentTime?.toFixed?.(2) || 0),
+      duration: Number.isFinite(el.duration) ? Number(el.duration.toFixed(2)) : null,
+      muted: !!el.muted,
+      volume: Number((el.volume ?? 1).toFixed(2)),
+      playback_rate: Number((el.playbackRate ?? 1).toFixed(2)),
+      autoplay: !!el.autoplay,
+      loop: !!el.loop,
+      ready_state: el.readyState,
+      ready_state_label: ['HAVE_NOTHING','HAVE_METADATA','HAVE_CURRENT_DATA','HAVE_FUTURE_DATA','HAVE_ENOUGH_DATA'][el.readyState] || 'UNKNOWN',
+      network_state: el.networkState,
+      buffered_ranges: buffered,
+      width: el.videoWidth || null,
+      height: el.videoHeight || null,
+      poster: el.poster || null,
+    };
+    out.push(info);
+    if (playIfPaused && el.paused && !el.ended) {
+      try {
+        const p = el.play();
+        if (p && typeof p.then === 'function') {
+          playAttempts.push(p.then(() => ({ index: i, played: true }))
+                              .catch((e) => ({ index: i, played: false, error: String(e?.message || e) })));
+        } else {
+          playAttempts.push(Promise.resolve({ index: i, played: true }));
+        }
+      } catch (e) {
+        playAttempts.push(Promise.resolve({ index: i, played: false, error: String(e?.message || e) }));
+      }
+    }
+  }
+  if (playAttempts.length) {
+    return Promise.all(playAttempts).then((results) => ({
+      url: location.href,
+      title: document.title,
+      media: out,
+      play_attempts: results,
+    }));
+  }
+  return { url: location.href, title: document.title, media: out };
+}
+
+// =====================================================================
 // UPDATE PLAN (interactive approval)
 // =====================================================================
 
@@ -6780,6 +6925,45 @@ async function tool_extractFormData({ form_selector, tab_id }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
   const r = await execIsolated(tab.id, (sel) => {
+    // Build a unique CSS selector for an element. Priority:
+    //   1. #id (if present + unique)
+    //   2. [name="…"] (forms have stable name attrs)
+    //   3. [data-testid="…"] / [data-test="…"]
+    //   4. tag + nth-of-type fallback within parent
+    function buildSelector(el) {
+      if (el.id) {
+        try {
+          if (document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+            return `#${CSS.escape(el.id)}`;
+          }
+        } catch {}
+      }
+      if (el.name) {
+        const tag = el.tagName.toLowerCase();
+        const sel = `${tag}[name="${el.name}"]`;
+        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch {}
+      }
+      const tid = el.getAttribute('data-testid') || el.getAttribute('data-test');
+      if (tid) {
+        const sel = `[data-testid="${tid}"]`;
+        try { if (document.querySelectorAll(sel).length === 1) return sel; } catch {}
+      }
+      // Fall back to nth-of-type path within nearest stable ancestor
+      const path = [];
+      let cur = el;
+      while (cur && cur.tagName && cur !== document.body) {
+        let part = cur.tagName.toLowerCase();
+        const parent = cur.parentElement;
+        if (parent) {
+          const sib = [...parent.children].filter(s => s.tagName === cur.tagName);
+          if (sib.length > 1) part += `:nth-of-type(${sib.indexOf(cur) + 1})`;
+        }
+        path.unshift(part);
+        if (cur.id) { path[0] = `#${CSS.escape(cur.id)} > ` + path.slice(1).join(' > '); break; }
+        cur = parent;
+      }
+      return path.length > 5 ? path.slice(-5).join(' > ') : path.join(' > ');
+    }
     const forms = sel ? document.querySelectorAll(sel) : document.querySelectorAll('form');
     return [...forms].map((f, fi) => ({
       form_index: fi,
@@ -6787,6 +6971,7 @@ async function tool_extractFormData({ form_selector, tab_id }) {
       method: f.method || 'get',
       fields: [...f.querySelectorAll('input, textarea, select')].map(i => ({
         name: i.name || null,
+        selector: buildSelector(i),
         type: i.type || i.tagName.toLowerCase(),
         value: i.type === 'password' ? '***' : (i.value || ''),
         label: i.labels?.[0]?.innerText?.trim() || i.getAttribute('aria-label') || i.getAttribute('placeholder') || null,

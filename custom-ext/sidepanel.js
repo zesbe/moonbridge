@@ -1097,6 +1097,7 @@ const ACTION_VERBS = {
   list_chat_attachments: 'List attachments', get_chat_attachment: 'Read attachment',
   upload_image: 'Upload file',
   download_status: 'Download status',
+  media_state: 'Media state',
 };
 
 const ACTION_ICONS = {
@@ -1139,6 +1140,7 @@ const ACTION_ICONS = {
   list_chat_attachments: '📎', get_chat_attachment: '📎',
   upload_image: '⬆️',
   download_status: '⬇',
+  media_state: '🎬',
 };
 
 // Tool → category, for premium batch titles ("Searching web", "Reading page" …)
@@ -1344,14 +1346,16 @@ function finalizeBatch() {
       b.classList.add('failed');
     } else {
       b.classList.add('completed');
-      // Auto-compact successful batches after a short read window so the
-      // long expanded timeline collapses into a single ✓ summary row.
-      // Failed batches stay expanded for inspection.
+      b.dataset.completed = '1';
+      // After read window: full DOM destroy.
+      // Old logic only added .collapsed → batch-head chip (~50px) stayed
+      // in the document forever, stacking with margins to look like blank
+      // space. Now we collapse to 0 height THEN .remove() the node.
       setTimeout(() => {
-        if (b.isConnected && !b.classList.contains('failed')) {
-          b.classList.add('auto-compact');
-          b.classList.add('collapsed');
-        }
+        if (!b.isConnected || b.classList.contains('failed')) return;
+        b.classList.add('shrinking', 'auto-compact', 'collapsed');
+        // Wait for shrink animation to complete before yanking from DOM
+        setTimeout(() => { try { b.remove(); } catch {} }, 320);
       }, 1400);
     }
     b.dataset.completed = '1';
@@ -1365,14 +1369,19 @@ function startNewBatch() {
     b.classList.remove('running', 'pending');
     b.classList.add('completed');
     b.dataset.completed = '1';
-    // Previous batch — collapse immediately so the new one doesn't push
-    // a wall of completed-step rows down the chat.
     if (!b.classList.contains('failed')) {
-      b.classList.add('auto-compact');
-      b.classList.add('collapsed');
+      // Previous batch already done — yeet immediately, no read-window.
+      try { b.remove(); } catch {}
     }
   }
   _currentBatch = null;
+  // Also reap any older completed-but-still-fading batches that haven't
+  // finished their removal timer. Belt-and-suspenders against stacking.
+  try {
+    messagesEl.querySelectorAll('.activity-batch.completed:not(.failed)').forEach((el) => {
+      try { el.remove(); } catch {}
+    });
+  } catch {}
 }
 
 function createActivityItem(toolName) {

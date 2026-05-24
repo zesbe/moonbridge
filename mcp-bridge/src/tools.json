@@ -1,7 +1,7 @@
 [
   {
     "name": "get_page",
-    "description": "Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus=\"main\" trims sidebar/recommendation noise on YouTube/Twitter/GitHub.",
+    "description": "Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus=\"main\" trims sidebar/recommendation noise on YouTube/Twitter/GitHub. focus=\"player\" on YouTube /watch returns player + title + metadata only.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -24,9 +24,10 @@
             "main",
             "main-content",
             "focused",
+            "player",
             "full-page"
           ],
-          "description": "auto (default) — main-content for SPAs, full-page elsewhere. main / main-content / focused — primary content only (drops sidebar). full-page — entire body."
+          "description": "auto (default) — main-content for SPAs, full-page elsewhere. main / focused — primary content (drops sidebar). player — YouTube /watch player+metadata only. full-page — entire body."
         }
       }
     }
@@ -1392,6 +1393,23 @@
     "input_schema": {
       "type": "object",
       "properties": {}
+    }
+  },
+  {
+    "name": "media_state",
+    "description": "Detect and read state of <video> and <audio> elements on the page. Returns array of {tag, src, paused, current_time, duration, muted, volume, playback_rate, autoplay, ended, ready_state, network_state, buffered_ranges}. Use this instead of execute_js to verify whether YouTube/Spotify/podcast is actually playing. Bypasses Trusted Types since it doesn't eval strings.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "description": "Default = active tab."
+        },
+        "play_if_paused": {
+          "type": "boolean",
+          "description": "If a media element is paused, attempt to .play() it (workaround for autoplay throttling). Default false."
+        }
+      }
     }
   },
   {
