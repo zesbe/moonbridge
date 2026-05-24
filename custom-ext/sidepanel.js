@@ -156,20 +156,28 @@ async function saveCurrentChat() {
   if (!conversation.length) return;
   const now = Date.now();
   if (!currentChatId) currentChatId = 'chat_' + now + '_' + Math.random().toString(36).slice(2, 8);
-  let title = '';
-  // Title from first user message
-  const first = conversation.find((m) => m.role === 'user');
-  if (first) {
-    const text = typeof first.content === 'string'
-      ? first.content
-      : (Array.isArray(first.content) ? first.content.find((c) => c.type === 'text')?.text || '' : '');
-    title = text.slice(0, 60).trim() || 'Untitled';
+
+  // Preserve user-edited title — saveCurrentChat regenerates from first user
+  // message every save, which used to overwrite any rename on next chat send.
+  const existing = savedChats.find((c) => c.id === currentChatId);
+  let title;
+  if (existing?.titleEdited) {
+    title = existing.title;
   } else {
-    title = 'Untitled';
+    const first = conversation.find((m) => m.role === 'user');
+    if (first) {
+      const text = typeof first.content === 'string'
+        ? first.content
+        : (Array.isArray(first.content) ? first.content.find((c) => c.type === 'text')?.text || '' : '');
+      title = text.slice(0, 60).trim() || 'Untitled';
+    } else {
+      title = 'Untitled';
+    }
   }
   const entry = {
     id: currentChatId,
     title,
+    titleEdited: !!existing?.titleEdited,
     mode,
     model: modelSelect.value || settings.defaultModel,
     conversation: conversation,
@@ -324,6 +332,7 @@ function startRenameChat(chat, labelEl) {
     const newTitle = input.value.trim();
     if (commit && newTitle && newTitle !== chat.title) {
       chat.title = newTitle;
+      chat.titleEdited = true;  // sticky flag — saveCurrentChat won't overwrite
       chat.updatedAt = Date.now();
       const idx = savedChats.findIndex((x) => x.id === chat.id);
       if (idx >= 0) {
