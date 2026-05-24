@@ -1006,6 +1006,130 @@ export const ALL_TOOLS = [
     description: 'List files in the user\'s knowledge base.',
     input_schema: { type: 'object', properties: {} },
   },
+
+  // ===== OCR / Text recognition =====
+  {
+    name: 'ocr_image',
+    description: 'Extract text from an image using Claude vision. Pass either a tab_id (screenshots that tab) or a selector (element_screenshot first), or a data_url. Use when text is in image/canvas/SVG and unreachable via DOM.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer', description: 'Tab to screenshot (default: active).' },
+        selector: { type: 'string', description: 'CSS selector or #ref-N to crop to.' },
+        data_url: { type: 'string', description: 'Or pass a data:image/... URL directly.' },
+        prompt: { type: 'string', description: 'Optional extra instruction (e.g. "extract phone numbers only").' },
+      },
+    },
+  },
+
+  // ===== Advanced cookie management =====
+  {
+    name: 'set_cookie',
+    description: 'Set a cookie. Useful to inject auth tokens. Domain inferred from URL if omitted.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL the cookie is for.' },
+        name: { type: 'string' },
+        value: { type: 'string' },
+        domain: { type: 'string' },
+        path: { type: 'string' },
+        secure: { type: 'boolean' },
+        http_only: { type: 'boolean' },
+        same_site: { type: 'string', enum: ['no_restriction', 'lax', 'strict'] },
+        expires_in: { type: 'integer', description: 'Seconds from now until expiry.' },
+      },
+      required: ['url', 'name', 'value'],
+    },
+  },
+  {
+    name: 'delete_cookie',
+    description: 'Delete a single cookie by name+url.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        name: { type: 'string' },
+      },
+      required: ['url', 'name'],
+    },
+  },
+  {
+    name: 'clear_cookies',
+    description: 'Delete ALL cookies for a domain. Useful for clean re-login or testing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string', description: 'e.g. "example.com" — clears all subdomains too.' },
+        url: { type: 'string', description: 'Or pass URL; domain extracted automatically.' },
+      },
+    },
+  },
+  {
+    name: 'export_cookies',
+    description: 'Export cookies in Netscape format (works with curl --cookie-jar / wget --load-cookies).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        tab_id: { type: 'integer' },
+      },
+    },
+  },
+
+  // ===== Performance profiling =====
+  {
+    name: 'perf_profile',
+    description: 'Measure page performance: load timing, paint metrics (FCP, LCP), resource breakdown, JS memory. Use after navigation or on load issue debugging.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        include_resources: { type: 'boolean', description: 'Include per-resource timing (default false, can be huge).' },
+      },
+    },
+  },
+
+  // ===== Accessibility / WCAG audit =====
+  {
+    name: 'a11y_audit',
+    description: 'Run WCAG 2.1 accessibility checks: missing alt text, unlabeled inputs, heading hierarchy, color contrast (computed style sample), ARIA misuse, focusable hidden elements. Returns issues with severity.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        severity: { type: 'string', enum: ['all', 'error', 'warning'], description: 'Filter (default: all).' },
+      },
+    },
+  },
+
+  // ===== API mocking =====
+  {
+    name: 'mock_api_start',
+    description: 'Intercept matching network requests and return canned responses. Useful to test UI under different API states. Requires debugger permission. Multiple rules can be active.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        url_pattern: { type: 'string', description: 'URL pattern (supports * wildcard). e.g. "*/api/users/*".' },
+        status: { type: 'integer', description: 'HTTP status to return (default 200).' },
+        body: { type: 'string', description: 'Response body (string or JSON).' },
+        content_type: { type: 'string', description: 'Default: application/json.' },
+        delay_ms: { type: 'integer', description: 'Artificial delay before responding.' },
+      },
+      required: ['url_pattern'],
+    },
+  },
+  {
+    name: 'mock_api_stop',
+    description: 'Stop all mocked routes on a tab and detach debugger.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+      },
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1172,6 +1296,15 @@ export async function executeTool(name, input, ctx = {}) {
       case 'upload_image':   return await tool_uploadImage(input || {});
       case 'update_plan':    return await tool_updatePlan(input || {}, ctx);
       case 'gif_capture':    return await tool_gifCapture(input || {});
+      case 'ocr_image':      return await tool_ocrImage(input || {}, ctx);
+      case 'set_cookie':     return await tool_setCookie(input || {});
+      case 'delete_cookie':  return await tool_deleteCookie(input || {});
+      case 'clear_cookies':  return await tool_clearCookies(input || {});
+      case 'export_cookies': return await tool_exportCookies(input || {});
+      case 'perf_profile':   return await tool_perfProfile(input || {});
+      case 'a11y_audit':     return await tool_a11yAudit(input || {});
+      case 'mock_api_start': return await tool_mockApiStart(input || {});
+      case 'mock_api_stop':  return await tool_mockApiStop(input || {});
       case 'web_search':     return await tool_webSearch(input || {});
       case 'youtube_transcript': return await tool_youtubeTranscript(input || {});
       case 'read_pdf':       return await tool_readPdf(input || {});
@@ -3632,4 +3765,575 @@ async function tool_gifCapture({ frames = 10, interval_ms = 500, tab_id }) {
     } catch {}
   }
   return { content: `Captured ${cap} frames @ ${dl}ms interval. Saved ${saved} PNG(s) to Downloads/${baseName}/. Use ffmpeg or online tool to combine into GIF.` };
+}
+
+// =====================================================================
+// OCR (Claude vision)
+// =====================================================================
+
+async function tool_ocrImage({ tab_id, selector, data_url, prompt }, ctx) {
+  // Get image data
+  let imageDataUrl = data_url;
+
+  if (!imageDataUrl) {
+    if (selector) {
+      const r = await tool_elementScreenshot({ selector, tab_id });
+      if (r.is_error) return r;
+      imageDataUrl = r.data_url;
+    } else {
+      const tab = await resolveTab(tab_id);
+      if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+      try {
+        imageDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      } catch (e) {
+        return { is_error: true, content: `Screenshot failed: ${e.message}` };
+      }
+    }
+  }
+
+  if (!imageDataUrl || !imageDataUrl.startsWith('data:image/')) {
+    return { is_error: true, content: 'No valid image data.' };
+  }
+
+  // Parse data URL
+  const m = imageDataUrl.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+  if (!m) return { is_error: true, content: 'Could not parse data URL.' };
+  const mediaType = m[1];
+  const b64 = m[2];
+
+  // Read settings (from chrome.storage, since tools.js doesn't import sidepanel state)
+  const { settings } = await chrome.storage.local.get(['settings']);
+  if (!settings?.apiToken) {
+    return { is_error: true, content: 'No API key configured. Open MoonBridge settings first.' };
+  }
+  const baseUrl = (settings.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
+  const model = settings.defaultModel || 'claude-sonnet-4-5';
+
+  const userText = prompt || 'Extract ALL text from this image. Preserve line breaks. Output ONLY the text, no commentary.';
+
+  try {
+    const resp = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': settings.apiToken,
+        'Authorization': `Bearer ${settings.apiToken}`,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: b64 } },
+            { type: 'text', text: userText },
+          ],
+        }],
+      }),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      return { is_error: true, content: `OCR HTTP ${resp.status}: ${txt.slice(0, 300)}` };
+    }
+    const json = await resp.json();
+    const text = (json.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+    return { content: text || '(no text recognized)' };
+  } catch (e) {
+    return { is_error: true, content: `OCR error: ${e.message}` };
+  }
+}
+
+// =====================================================================
+// ADVANCED COOKIE MANAGEMENT
+// =====================================================================
+
+async function tool_setCookie({ url, name, value, domain, path = '/', secure, http_only, same_site, expires_in }) {
+  if (!url || !name) return { is_error: true, content: 'url and name are required.' };
+  const opts = { url, name, value: value || '', path };
+  if (domain) opts.domain = domain;
+  if (typeof secure === 'boolean') opts.secure = secure;
+  if (typeof http_only === 'boolean') opts.httpOnly = http_only;
+  if (same_site) opts.sameSite = same_site;
+  if (expires_in) opts.expirationDate = (Date.now() / 1000) + expires_in;
+
+  try {
+    const c = await chrome.cookies.set(opts);
+    if (!c) return { is_error: true, content: 'chrome.cookies.set returned null (likely blocked by browser policy or invalid params).' };
+    return { content: `Set cookie ${c.name} for ${c.domain}${c.path}` };
+  } catch (e) {
+    return { is_error: true, content: `set_cookie error: ${e.message}` };
+  }
+}
+
+async function tool_deleteCookie({ url, name }) {
+  if (!url || !name) return { is_error: true, content: 'url and name are required.' };
+  try {
+    const r = await chrome.cookies.remove({ url, name });
+    if (!r) return { content: `Cookie ${name} not found at ${url}.` };
+    return { content: `Deleted cookie ${name} from ${url}.` };
+  } catch (e) {
+    return { is_error: true, content: e.message };
+  }
+}
+
+async function tool_clearCookies({ domain, url }) {
+  let targetDomain = domain;
+  if (!targetDomain && url) {
+    try { targetDomain = new URL(url).hostname; } catch {}
+  }
+  if (!targetDomain) return { is_error: true, content: 'Provide domain or url.' };
+
+  // Strip leading dot, normalize
+  const dom = targetDomain.replace(/^\./, '');
+
+  // chrome.cookies.getAll matches by domain (covers subdomains via leading dot)
+  const cookies = await chrome.cookies.getAll({ domain: dom });
+  let removed = 0;
+  for (const c of cookies) {
+    const cookieUrl = (c.secure ? 'https://' : 'http://') + c.domain.replace(/^\./, '') + c.path;
+    try {
+      const r = await chrome.cookies.remove({ url: cookieUrl, name: c.name, storeId: c.storeId });
+      if (r) removed++;
+    } catch {}
+  }
+  return { content: `Cleared ${removed}/${cookies.length} cookies for domain ${dom}.` };
+}
+
+async function tool_exportCookies({ url, tab_id }) {
+  let target = url;
+  if (!target) {
+    const tab = await resolveTab(tab_id);
+    target = tab.url;
+  }
+  if (!target) return { is_error: true, content: 'no URL.' };
+
+  const cookies = await chrome.cookies.getAll({ url: target });
+  if (!cookies.length) return { content: '(no cookies)' };
+
+  // Netscape format: domain  flag  path  secure  expiration  name  value
+  const lines = ['# Netscape HTTP Cookie File', '# Generated by MoonBridge'];
+  for (const c of cookies) {
+    const dom = c.domain.startsWith('.') ? c.domain : '.' + c.domain;
+    const flag = c.hostOnly ? 'FALSE' : 'TRUE';
+    const secure = c.secure ? 'TRUE' : 'FALSE';
+    const exp = c.expirationDate ? Math.floor(c.expirationDate) : 0;
+    lines.push([dom, flag, c.path, secure, exp, c.name, c.value].join('\t'));
+  }
+  return { content: '```\n' + lines.join('\n') + '\n```\n\nUse with curl: `curl --cookie cookies.txt URL`' };
+}
+
+// =====================================================================
+// PERFORMANCE PROFILE
+// =====================================================================
+
+async function tool_perfProfile({ tab_id, include_resources = false }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (includeResources) => {
+      const out = { url: location.href, navigation: {}, paint: {}, memory: {}, resources: null, summary: {} };
+
+      // Navigation timing
+      const navEntry = performance.getEntriesByType('navigation')[0];
+      if (navEntry) {
+        out.navigation = {
+          dns_ms: Math.round(navEntry.domainLookupEnd - navEntry.domainLookupStart),
+          tcp_ms: Math.round(navEntry.connectEnd - navEntry.connectStart),
+          ttfb_ms: Math.round(navEntry.responseStart - navEntry.requestStart),
+          response_ms: Math.round(navEntry.responseEnd - navEntry.responseStart),
+          dom_ms: Math.round(navEntry.domContentLoadedEventEnd - navEntry.responseEnd),
+          load_total_ms: Math.round(navEntry.loadEventEnd - navEntry.startTime),
+          transfer_size: navEntry.transferSize,
+          encoded_body_size: navEntry.encodedBodySize,
+          decoded_body_size: navEntry.decodedBodySize,
+        };
+      }
+
+      // Paint
+      const paints = performance.getEntriesByType('paint');
+      for (const p of paints) {
+        out.paint[p.name.replace(/-/g, '_')] = Math.round(p.startTime);
+      }
+
+      // LCP via PerformanceObserver buffered
+      const lcpEntries = performance.getEntriesByType ? performance.getEntriesByType('largest-contentful-paint') : [];
+      if (lcpEntries.length) {
+        const lcp = lcpEntries[lcpEntries.length - 1];
+        out.paint.largest_contentful_paint = Math.round(lcp.startTime);
+      }
+
+      // Memory (non-standard)
+      if (performance.memory) {
+        out.memory = {
+          used_mb: (performance.memory.usedJSHeapSize / 1048576).toFixed(2),
+          total_mb: (performance.memory.totalJSHeapSize / 1048576).toFixed(2),
+          limit_mb: (performance.memory.jsHeapSizeLimit / 1048576).toFixed(2),
+        };
+      }
+
+      // Resource summary
+      const resources = performance.getEntriesByType('resource');
+      const byType = {};
+      let totalBytes = 0;
+      let totalDuration = 0;
+      for (const r of resources) {
+        const type = r.initiatorType || 'other';
+        byType[type] = byType[type] || { count: 0, bytes: 0, ms: 0 };
+        byType[type].count++;
+        byType[type].bytes += (r.transferSize || 0);
+        byType[type].ms += r.duration;
+        totalBytes += (r.transferSize || 0);
+        totalDuration += r.duration;
+      }
+      out.summary = {
+        total_resources: resources.length,
+        total_transfer_kb: (totalBytes / 1024).toFixed(1),
+        total_duration_ms: Math.round(totalDuration),
+        by_type: byType,
+      };
+
+      if (includeResources) {
+        out.resources = resources
+          .sort((a, b) => (b.transferSize || 0) - (a.transferSize || 0))
+          .slice(0, 30)
+          .map(r => ({
+            name: r.name.length > 100 ? r.name.slice(0, 97) + '…' : r.name,
+            type: r.initiatorType,
+            kb: ((r.transferSize || 0) / 1024).toFixed(1),
+            ms: Math.round(r.duration),
+          }));
+      }
+
+      return out;
+    },
+    args: [include_resources],
+  });
+
+  const data = result[0]?.result;
+  if (!data) return { is_error: true, content: 'Could not collect performance data.' };
+
+  // Format for the agent
+  const lines = [`Performance for ${data.url}`, ''];
+  if (data.navigation.load_total_ms) {
+    lines.push('Navigation:');
+    lines.push(`  DNS lookup:     ${data.navigation.dns_ms} ms`);
+    lines.push(`  TCP connect:    ${data.navigation.tcp_ms} ms`);
+    lines.push(`  TTFB:           ${data.navigation.ttfb_ms} ms`);
+    lines.push(`  Response:       ${data.navigation.response_ms} ms`);
+    lines.push(`  DOM ready:      ${data.navigation.dom_ms} ms`);
+    lines.push(`  TOTAL load:     ${data.navigation.load_total_ms} ms`);
+    lines.push(`  Transfer size:  ${(data.navigation.transfer_size / 1024).toFixed(1)} KB`);
+    lines.push('');
+  }
+  if (Object.keys(data.paint).length) {
+    lines.push('Paint metrics:');
+    for (const [k, v] of Object.entries(data.paint)) {
+      lines.push(`  ${k}: ${v} ms`);
+    }
+    lines.push('');
+  }
+  if (data.memory.used_mb) {
+    lines.push(`JS Heap: ${data.memory.used_mb} MB used / ${data.memory.total_mb} MB total / ${data.memory.limit_mb} MB limit`);
+    lines.push('');
+  }
+  lines.push(`Resources: ${data.summary.total_resources} requests, ${data.summary.total_transfer_kb} KB total, ${data.summary.total_duration_ms} ms cumulative`);
+  for (const [type, s] of Object.entries(data.summary.by_type)) {
+    lines.push(`  ${type}: ${s.count} reqs, ${(s.bytes / 1024).toFixed(1)} KB, ${Math.round(s.ms)} ms`);
+  }
+
+  if (include_resources && data.resources) {
+    lines.push('', 'Top 30 resources by size:');
+    for (const r of data.resources) {
+      lines.push(`  ${r.kb} KB  ${r.ms} ms  [${r.type}]  ${r.name}`);
+    }
+  }
+
+  return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// ACCESSIBILITY AUDIT
+// =====================================================================
+
+async function tool_a11yAudit({ tab_id, severity = 'all' }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      const issues = [];
+      const sel = (e) => {
+        if (e.id) return `#${e.id}`;
+        const cls = e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+        return e.tagName.toLowerCase() + cls;
+      };
+
+      // 1. Images without alt
+      for (const img of document.querySelectorAll('img')) {
+        if (!img.hasAttribute('alt')) {
+          issues.push({ severity: 'error', rule: 'img-alt', element: sel(img), msg: 'Image missing alt attribute' });
+        }
+      }
+      // 2. Inputs without labels
+      for (const inp of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select')) {
+        const hasLabel = inp.labels?.length || inp.getAttribute('aria-label') || inp.getAttribute('aria-labelledby') || inp.getAttribute('placeholder');
+        if (!hasLabel) {
+          issues.push({ severity: 'error', rule: 'input-label', element: sel(inp), msg: 'Form input has no accessible label' });
+        }
+      }
+      // 3. Buttons without text
+      for (const b of document.querySelectorAll('button, [role=button]')) {
+        const text = (b.innerText || b.textContent || '').trim();
+        const aria = b.getAttribute('aria-label') || b.getAttribute('aria-labelledby') || b.getAttribute('title');
+        if (!text && !aria) {
+          issues.push({ severity: 'error', rule: 'button-name', element: sel(b), msg: 'Button has no discernible text' });
+        }
+      }
+      // 4. Links without text
+      for (const a of document.querySelectorAll('a[href]')) {
+        const text = (a.innerText || a.textContent || '').trim();
+        const aria = a.getAttribute('aria-label') || a.querySelector('img')?.getAttribute('alt');
+        if (!text && !aria) {
+          issues.push({ severity: 'error', rule: 'link-name', element: sel(a), msg: 'Link has no discernible text' });
+        }
+      }
+      // 5. Heading hierarchy
+      const headings = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')];
+      let prevLevel = 0;
+      let h1Count = 0;
+      for (const h of headings) {
+        const lvl = parseInt(h.tagName[1]);
+        if (lvl === 1) h1Count++;
+        if (prevLevel && lvl > prevLevel + 1) {
+          issues.push({ severity: 'warning', rule: 'heading-order', element: sel(h),
+            msg: `Heading skips levels (h${prevLevel} → h${lvl})` });
+        }
+        prevLevel = lvl;
+      }
+      if (h1Count === 0 && headings.length) {
+        issues.push({ severity: 'warning', rule: 'h1-missing', element: 'document', msg: 'Page has no <h1> heading' });
+      }
+      if (h1Count > 1) {
+        issues.push({ severity: 'warning', rule: 'h1-multiple', element: 'document', msg: `Page has ${h1Count} <h1> headings (should be 1)` });
+      }
+      // 6. ARIA misuse — invalid role
+      const validRoles = new Set([
+        'alert','alertdialog','application','article','banner','button','cell','checkbox','columnheader',
+        'combobox','complementary','contentinfo','definition','dialog','directory','document','feed',
+        'figure','form','grid','gridcell','group','heading','img','link','list','listbox','listitem',
+        'log','main','marquee','math','menu','menubar','menuitem','menuitemcheckbox','menuitemradio',
+        'navigation','none','note','option','presentation','progressbar','radio','radiogroup','region',
+        'row','rowgroup','rowheader','scrollbar','search','searchbox','separator','slider','spinbutton',
+        'status','switch','tab','table','tablist','tabpanel','term','textbox','timer','toolbar','tooltip',
+        'tree','treegrid','treeitem','rowheader','article','section'
+      ]);
+      for (const e of document.querySelectorAll('[role]')) {
+        const r = e.getAttribute('role');
+        if (r && !validRoles.has(r.split(' ')[0])) {
+          issues.push({ severity: 'warning', rule: 'aria-role-invalid', element: sel(e), msg: `Invalid ARIA role: "${r}"` });
+        }
+      }
+      // 7. Focusable hidden elements
+      for (const e of document.querySelectorAll('[tabindex]:not([tabindex="-1"])')) {
+        const cs = getComputedStyle(e);
+        if (cs.display === 'none' || cs.visibility === 'hidden') {
+          issues.push({ severity: 'warning', rule: 'focusable-hidden', element: sel(e),
+            msg: 'Element is focusable but visually hidden' });
+        }
+      }
+      // 8. <html> lang
+      if (!document.documentElement.getAttribute('lang')) {
+        issues.push({ severity: 'error', rule: 'html-lang', element: 'html', msg: 'Document missing lang attribute' });
+      }
+      // 9. Page title
+      if (!document.title || !document.title.trim()) {
+        issues.push({ severity: 'error', rule: 'document-title', element: 'head', msg: 'Document missing title' });
+      }
+      // 10. Sample contrast (5 elements)
+      const sampleElements = [...document.querySelectorAll('p, span, a, button, h1, h2, h3, label')]
+        .filter(e => e.innerText && e.innerText.trim().length > 0)
+        .slice(0, 30);
+      const parseColor = (str) => {
+        const m = str.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!m) return null;
+        return [+m[1], +m[2], +m[3]];
+      };
+      const luminance = ([r, g, b]) => {
+        const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      const contrast = (a, b) => {
+        const la = luminance(a), lb = luminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+      };
+      // Walk up to find effective bg
+      const effectiveBg = (el) => {
+        let cur = el;
+        while (cur && cur !== document.body) {
+          const cs = getComputedStyle(cur);
+          const c = parseColor(cs.backgroundColor);
+          if (c && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') return c;
+          cur = cur.parentElement;
+        }
+        return [255, 255, 255]; // fallback white
+      };
+      for (const el of sampleElements) {
+        const cs = getComputedStyle(el);
+        const fg = parseColor(cs.color);
+        if (!fg) continue;
+        const bg = effectiveBg(el);
+        const ratio = contrast(fg, bg);
+        const fontSize = parseFloat(cs.fontSize);
+        const fontWeight = parseInt(cs.fontWeight) || 400;
+        const isLargeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
+        const required = isLargeText ? 3 : 4.5;
+        if (ratio < required) {
+          issues.push({
+            severity: ratio < 3 ? 'error' : 'warning',
+            rule: 'contrast',
+            element: sel(el),
+            msg: `Contrast ${ratio.toFixed(2)}:1 (need ${required}:1) — text "${el.innerText.slice(0, 40)}…"`,
+          });
+        }
+      }
+
+      return {
+        url: location.href,
+        title: document.title,
+        issues_total: issues.length,
+        issues,
+      };
+    },
+  });
+
+  const data = result[0]?.result;
+  if (!data) return { is_error: true, content: 'Could not run audit.' };
+
+  const filtered = severity === 'all' ? data.issues : data.issues.filter(i => i.severity === severity);
+  if (!filtered.length) {
+    return { content: `✓ No ${severity === 'all' ? '' : severity + ' '}issues found on ${data.title || data.url}` };
+  }
+
+  const errs = filtered.filter(i => i.severity === 'error').length;
+  const warns = filtered.filter(i => i.severity === 'warning').length;
+  const lines = [
+    `A11y audit: ${data.title || data.url}`,
+    `${errs} error(s), ${warns} warning(s)`,
+    '',
+  ];
+  // Group by rule
+  const byRule = {};
+  for (const i of filtered) {
+    (byRule[i.rule] = byRule[i.rule] || []).push(i);
+  }
+  for (const [rule, list] of Object.entries(byRule)) {
+    lines.push(`[${list[0].severity.toUpperCase()}] ${rule} (${list.length}):`);
+    for (const i of list.slice(0, 5)) {
+      lines.push(`  ${i.element} — ${i.msg}`);
+    }
+    if (list.length > 5) lines.push(`  … and ${list.length - 5} more`);
+  }
+  lines.push('', 'Note: Full WCAG validation requires manual testing with assistive technologies.');
+  return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// API MOCKING (CDP Fetch interception)
+// =====================================================================
+
+const _MOCK_RULES = new Map(); // tabId -> [{pattern, status, body, contentType, delayMs}]
+
+async function _ensureCdpAttached(tabId) {
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3');
+  } catch (e) {
+    if (!e.message.includes('already attached')) throw e;
+  }
+}
+
+async function tool_mockApiStart({ tab_id, url_pattern, status = 200, body = '', content_type = 'application/json', delay_ms = 0 }) {
+  if (!url_pattern) return { is_error: true, content: 'url_pattern is required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  await _ensureCdpAttached(tab.id);
+
+  // Add rule
+  const rules = _MOCK_RULES.get(tab.id) || [];
+  rules.push({ pattern: url_pattern, status, body, contentType: content_type, delayMs: delay_ms });
+  _MOCK_RULES.set(tab.id, rules);
+
+  // Set up listener if first rule for this tab
+  if (rules.length === 1) {
+    const onEvent = async (source, method, params) => {
+      if (source.tabId !== tab.id) return;
+      if (method !== 'Fetch.requestPaused') return;
+      const tabRules = _MOCK_RULES.get(tab.id) || [];
+      const reqUrl = params.request.url;
+      const matched = tabRules.find(r => _wildcardMatch(r.pattern, reqUrl));
+      if (matched) {
+        if (matched.delayMs) await new Promise(r => setTimeout(r, matched.delayMs));
+        const bodyB64 = btoa(unescape(encodeURIComponent(matched.body)));
+        try {
+          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Fetch.fulfillRequest', {
+            requestId: params.requestId,
+            responseCode: matched.status,
+            responseHeaders: [
+              { name: 'Content-Type', value: matched.contentType },
+              { name: 'X-Mocked-By', value: 'MoonBridge' },
+            ],
+            body: bodyB64,
+          });
+        } catch {}
+      } else {
+        try {
+          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Fetch.continueRequest', {
+            requestId: params.requestId,
+          });
+        } catch {}
+      }
+    };
+    chrome.debugger.onEvent.addListener(onEvent);
+    // Store listener for removal
+    const tabState = _MOCK_RULES.get(tab.id);
+    tabState._listener = onEvent;
+
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Fetch.enable', {
+      patterns: [{ urlPattern: '*', requestStage: 'Request' }],
+    });
+  }
+
+  return { content: `Mock active for tab ${tab.id}: ${url_pattern} → HTTP ${status} (${body.length} bytes). ${rules.length} rule(s) total.` };
+}
+
+function _wildcardMatch(pattern, url) {
+  // Convert * to .* for regex
+  const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+  return re.test(url);
+}
+
+async function tool_mockApiStop({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  const rules = _MOCK_RULES.get(tab.id);
+  if (!rules || !rules.length) return { content: 'No mocks active for this tab.' };
+
+  // Remove listener
+  if (rules._listener) {
+    try { chrome.debugger.onEvent.removeListener(rules._listener); } catch {}
+  }
+
+  try {
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Fetch.disable');
+  } catch {}
+  try {
+    await chrome.debugger.detach({ tabId: tab.id });
+  } catch {}
+
+  const count = rules.length;
+  _MOCK_RULES.delete(tab.id);
+  return { content: `Stopped ${count} mock rule(s) on tab ${tab.id}.` };
 }

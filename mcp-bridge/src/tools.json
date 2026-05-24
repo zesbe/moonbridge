@@ -1603,5 +1603,213 @@
       "type": "object",
       "properties": {}
     }
+  },
+  {
+    "name": "ocr_image",
+    "description": "Extract text from an image using Claude vision. Pass either a tab_id (screenshots that tab) or a selector (element_screenshot first), or a data_url. Use when text is in image/canvas/SVG and unreachable via DOM.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "description": "Tab to screenshot (default: active)."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector or #ref-N to crop to."
+        },
+        "data_url": {
+          "type": "string",
+          "description": "Or pass a data:image/... URL directly."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional extra instruction (e.g. \"extract phone numbers only\")."
+        }
+      }
+    }
+  },
+  {
+    "name": "set_cookie",
+    "description": "Set a cookie. Useful to inject auth tokens. Domain inferred from URL if omitted.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL the cookie is for."
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "secure": {
+          "type": "boolean"
+        },
+        "http_only": {
+          "type": "boolean"
+        },
+        "same_site": {
+          "type": "string",
+          "enum": [
+            "no_restriction",
+            "lax",
+            "strict"
+          ]
+        },
+        "expires_in": {
+          "type": "integer",
+          "description": "Seconds from now until expiry."
+        }
+      },
+      "required": [
+        "url",
+        "name",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "delete_cookie",
+    "description": "Delete a single cookie by name+url.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "clear_cookies",
+    "description": "Delete ALL cookies for a domain. Useful for clean re-login or testing.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "e.g. \"example.com\" — clears all subdomains too."
+        },
+        "url": {
+          "type": "string",
+          "description": "Or pass URL; domain extracted automatically."
+        }
+      }
+    }
+  },
+  {
+    "name": "export_cookies",
+    "description": "Export cookies in Netscape format (works with curl --cookie-jar / wget --load-cookies).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "perf_profile",
+    "description": "Measure page performance: load timing, paint metrics (FCP, LCP), resource breakdown, JS memory. Use after navigation or on load issue debugging.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "include_resources": {
+          "type": "boolean",
+          "description": "Include per-resource timing (default false, can be huge)."
+        }
+      }
+    }
+  },
+  {
+    "name": "a11y_audit",
+    "description": "Run WCAG 2.1 accessibility checks: missing alt text, unlabeled inputs, heading hierarchy, color contrast (computed style sample), ARIA misuse, focusable hidden elements. Returns issues with severity.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "all",
+            "error",
+            "warning"
+          ],
+          "description": "Filter (default: all)."
+        }
+      }
+    }
+  },
+  {
+    "name": "mock_api_start",
+    "description": "Intercept matching network requests and return canned responses. Useful to test UI under different API states. Requires debugger permission. Multiple rules can be active.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "url_pattern": {
+          "type": "string",
+          "description": "URL pattern (supports * wildcard). e.g. \"*/api/users/*\"."
+        },
+        "status": {
+          "type": "integer",
+          "description": "HTTP status to return (default 200)."
+        },
+        "body": {
+          "type": "string",
+          "description": "Response body (string or JSON)."
+        },
+        "content_type": {
+          "type": "string",
+          "description": "Default: application/json."
+        },
+        "delay_ms": {
+          "type": "integer",
+          "description": "Artificial delay before responding."
+        }
+      },
+      "required": [
+        "url_pattern"
+      ]
+    }
+  },
+  {
+    "name": "mock_api_stop",
+    "description": "Stop all mocked routes on a tab and detach debugger.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
   }
 ]
