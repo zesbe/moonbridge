@@ -130,7 +130,26 @@ async function loadSettings() {
   };
   if (!settings.cacheTtl) settings.cacheTtl = '5m';
   if (data.agentPrefs) {
-    if (Array.isArray(data.agentPrefs.toolWhitelist)) toolWhitelist = new Set(data.agentPrefs.toolWhitelist);
+    if (Array.isArray(data.agentPrefs.toolWhitelist)) {
+      // Restore stored whitelist BUT auto-enable any tool that's been added
+      // to ALL_TOOLS since last save. Without this, new tools (smart_click,
+      // ai_extract_data, db_*, etc) get silently filtered out because the
+      // stored whitelist was captured when the tool list was smaller.
+      const stored = new Set(data.agentPrefs.toolWhitelist);
+      const currentNames = ALL_TOOLS.map((t) => t.name);
+      const newTools = currentNames.filter((n) => !stored.has(n));
+      if (newTools.length) {
+        for (const n of newTools) stored.add(n);
+        // Persist immediately so next reload sees the merged set
+        try {
+          await chrome.storage.local.set({
+            agentPrefs: { ...data.agentPrefs, toolWhitelist: [...stored] },
+          });
+        } catch {}
+        console.log(`[MoonBridge] Auto-enabled ${newTools.length} new tools added since last session.`);
+      }
+      toolWhitelist = stored;
+    }
     if (data.agentPrefs.approvalMode) approvalModeVal = data.agentPrefs.approvalMode;
   }
   approvalModeSel.value = approvalModeVal;
