@@ -2034,11 +2034,14 @@ body {
   margin-left: 33px;
   margin-top: 8px;
   margin-bottom: 4px;
+  /* Use opacity + transform only — no max-height in keyframes.
+     max-height was clamping the image height when scrolled inside
+     .batch-body and made Chat 2 preview invisible. */
   animation: inline-preview-in 360ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
 }
 @keyframes inline-preview-in {
-  0%   { opacity: 0; transform: translateY(-6px) scale(0.97); max-height: 0; }
-  100% { opacity: 1; transform: translateY(0) scale(1); max-height: 400px; }
+  0%   { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 .action-inline-preview-img {
   display: block;

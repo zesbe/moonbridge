@@ -1561,9 +1561,13 @@ function setActivityResult(card, content, isError, dataUrl) {
   s.querySelector('pre').textContent = textOut.slice(0, 4000);
 
   if (dataUrl) {
+    // Debug log so we can verify dataUrl is flowing on every turn.
+    // (Was looking like Chat 2 had no screenshot — turned out lazy-load
+    // + scroll race kept the image out of view.)
+    logger?.debug?.(`[setActivityResult] dataUrl present, len=${dataUrl.length}, tool=${card._name}`);
+
     // INLINE preview — render the screenshot directly under the row so
     // user sees it without needing to expand the detail panel.
-    // (Was hidden in .action-detail before — user feedback: "ga keliatan di chat")
     let inline = card.item.querySelector('.action-inline-preview');
     if (!inline) {
       inline = document.createElement('div');
@@ -1571,10 +1575,23 @@ function setActivityResult(card, content, isError, dataUrl) {
       const ipImg = document.createElement('img');
       ipImg.className = 'action-inline-preview-img';
       ipImg.alt = 'screenshot';
-      ipImg.loading = 'lazy';
+      // Don't use loading="lazy" — IntersectionObserver doesn't reliably
+      // fire when the image is in a scrollable parent (.batch-body has
+      // overflow-y:auto). Plus auto-scroll happens before image decodes,
+      // so lazy-load decides "not visible" and never loads. Eager always.
+      ipImg.loading = 'eager';
+      ipImg.decoding = 'async';
+      // Re-scroll after image actually loads so its full height is in the
+      // scroll calculation. Otherwise the body bottoms out before image
+      // dimensions are available.
+      ipImg.addEventListener('load', () => {
+        scrollBatchBodyToBottom(card.batch.querySelector('.batch-body'));
+      });
+      ipImg.addEventListener('error', () => {
+        logger?.warn?.(`[inline-preview] image failed to load, src len=${dataUrl.length}`);
+      });
       ipImg.addEventListener('click', () => showImageZoom(dataUrl));
       inline.appendChild(ipImg);
-      // Insert AFTER the action-content so the row layout still works
       card.item.appendChild(inline);
     }
     inline.querySelector('img').src = dataUrl;
@@ -1600,6 +1617,12 @@ function setActivityResult(card, content, isError, dataUrl) {
       card.detail.appendChild(img);
     }
     img.src = dataUrl;
+  } else {
+    // No dataUrl — but tool name suggests there should be one. Log so
+    // we can diagnose if the tool result lost its _dataUrl somewhere.
+    if (/screenshot|gif_capture|element_screenshot/.test(card._name || '')) {
+      logger?.warn?.(`[setActivityResult] expected dataUrl for ${card._name}, got none`);
+    }
   }
 
   const batch = card.batch;
