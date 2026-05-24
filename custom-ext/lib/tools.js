@@ -1306,6 +1306,37 @@ export const ALL_TOOLS = [
       },
     },
   },
+
+  // ===== Health check =====
+  {
+    name: 'health_check',
+    description: 'Get MoonBridge\'s current runtime state: tab count, network buffer status, workspace size, readonly mode, navigation rate-limit budget, mock rules active, debugger attached. Use to diagnose issues before/after complex operations.',
+    input_schema: { type: 'object', properties: {} },
+  },
+
+  // ===== Conditional action =====
+  {
+    name: 'conditional_action',
+    description: 'Try a chain of tool calls until one succeeds. Useful when target element might be one of several selectors (different layouts / A-B variants / shadow vs light DOM).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        actions: {
+          type: 'array',
+          description: 'Actions to try in order. Each: {tool: "click", input: {selector: "#btn"}}',
+          items: {
+            type: 'object',
+            properties: {
+              tool: { type: 'string' },
+              input: { type: 'object' },
+            },
+            required: ['tool', 'input'],
+          },
+        },
+      },
+      required: ['actions'],
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1402,130 +1433,184 @@ const _MUTATING_TOOLS = new Set([
   'cdp_key', 'group_tabs',
 ]);
 
+// Standardized error codes — addresses AI feedback "Error messages generic"
+const ERR_CODES = {
+  TIMEOUT: 'ERR_TIMEOUT',
+  RESTRICTED: 'ERR_RESTRICTED',
+  NOT_FOUND: 'ERR_NOT_FOUND',
+  AUTH_REQUIRED: 'ERR_AUTH_REQUIRED',
+  RATE_LIMITED: 'ERR_RATE_LIMITED',
+  READONLY: 'ERR_READONLY',
+  PERMISSION: 'ERR_PERMISSION',
+  WHITELIST: 'ERR_WHITELIST',
+  USER_DENIED: 'ERR_USER_DENIED',
+  INVALID_INPUT: 'ERR_INVALID_INPUT',
+  UNKNOWN_TOOL: 'ERR_UNKNOWN_TOOL',
+  EXEC_FAILED: 'ERR_EXEC_FAILED',
+};
+
+function _inferErrorCode(content) {
+  const c = String(content || '').toLowerCase();
+  if (c.includes('restricted') || c.includes('chrome://') || c.includes('blocked by browser')) return ERR_CODES.RESTRICTED;
+  if (c.includes('timed out') || c.includes('timeout')) return ERR_CODES.TIMEOUT;
+  if (c.includes('not found') || c.includes('no element') || c.includes('no matching')) return ERR_CODES.NOT_FOUND;
+  if (c.includes('auth') || c.includes('login') || c.includes('not signed')) return ERR_CODES.AUTH_REQUIRED;
+  if (c.includes('rate limit') || c.includes('too many')) return ERR_CODES.RATE_LIMITED;
+  if (c.includes('read-only') || c.includes('readonly')) return ERR_CODES.READONLY;
+  if (c.includes('permission')) return ERR_CODES.PERMISSION;
+  if (c.includes('disabled for this') || c.includes('whitelist')) return ERR_CODES.WHITELIST;
+  if (c.includes('denied permission')) return ERR_CODES.USER_DENIED;
+  if (c.includes('required') || c.includes('invalid')) return ERR_CODES.INVALID_INPUT;
+  if (c.startsWith('unknown tool:')) return ERR_CODES.UNKNOWN_TOOL;
+  return ERR_CODES.EXEC_FAILED;
+}
+
 export async function executeTool(name, input, ctx = {}) {
+  // Universal timer + error envelope wrapper
+  const start = performance.now();
+
+  const wrap = (result) => {
+    const ms = Math.round(performance.now() - start);
+    if (!result || typeof result !== 'object') return result;
+    // Inject execution_time_ms into all responses
+    result.execution_time_ms = ms;
+    if (result.is_error) {
+      result.error_code = result.error_code || _inferErrorCode(result.content);
+      // Prefix content with code so model can parse easily
+      if (typeof result.content === 'string' && !result.content.startsWith('[')) {
+        result.content = `[${result.error_code}] ${result.content} (took ${ms}ms)`;
+      }
+    }
+    return result;
+  };
+
   if (ctx.whitelist && !ctx.whitelist.has(name)) {
-    return { is_error: true, content: `Tool "${name}" is disabled for this conversation.` };
+    return wrap({ is_error: true, error_code: ERR_CODES.WHITELIST,
+                  content: `Tool "${name}" is disabled for this conversation.` });
   }
-  // Read-only enforcement (per AI feedback "User bisa lock sesi jadi cuma boleh baca")
   if (_MUTATING_TOOLS.has(name) && await _isReadonly()) {
-    return { is_error: true, content: `🔒 Read-only mode is active. "${name}" is blocked. Call set_readonly with enabled=false to unlock.` };
+    return wrap({ is_error: true, error_code: ERR_CODES.READONLY,
+                  content: `🔒 Read-only mode is active. "${name}" is blocked. Call set_readonly with enabled=false to unlock.` });
   }
   const needs = await needsApproval(name, input, ctx);
   if (needs.required && ctx.askApproval) {
     const ok = await ctx.askApproval({ name, input, reason: needs.reason });
-    if (!ok) return { is_error: true, content: `User denied permission to call ${name}.` };
+    if (!ok) return wrap({ is_error: true, error_code: ERR_CODES.USER_DENIED,
+                            content: `User denied permission to call ${name}.` });
   }
   try {
     switch (name) {
-      case 'get_page':       return await tool_getPage(input || {});
-      case 'read_tab':       return await tool_getPage({ ...input, tab_id: input?.tab_id });
-      case 'find_element':   return await tool_findElement(input || {});
-      case 'extract_links':  return await tool_extractLinks(input || {});
-      case 'get_console':    return await tool_getConsole(input || {});
-      case 'click':          return await tool_click(input || {});
-      case 'hover':          return await tool_hover(input || {});
-      case 'type':           return await tool_type(input || {});
-      case 'key_press':      return await tool_keyPress(input || {});
-      case 'select_option':  return await tool_selectOption(input || {});
-      case 'fill_form':      return await tool_fillForm(input || {});
-      case 'scroll':         return await tool_scroll(input || {});
-      case 'wait_for':       return await tool_waitFor(input || {});
-      case 'wait':           return await tool_wait(input || {});
-      case 'navigate':       return await tool_navigate(input || {});
-      case 'back':           return await tool_back(input || {});
-      case 'forward':        return await tool_forward(input || {});
-      case 'reload':         return await tool_reload(input || {});
-      case 'screenshot':     return await tool_screenshot(input || {});
-      case 'execute_js':     return await tool_executeJs(input || {});
-      case 'list_tabs':      return await tool_listTabs(input || {});
-      case 'switch_tab':     return await tool_switchTab(input || {});
-      case 'new_tab':        return await tool_newTab(input || {});
-      case 'close_tab':      return await tool_closeTab(input || {});
-      case 'duplicate_tab':  return await tool_duplicateTab(input || {});
-      case 'click_and_read':  return await tool_clickAndRead(input || {});
-      case 'navigate_and_read': return await tool_navigateAndRead(input || {});
-      case 'network_log':    return await tool_networkLog(input || {});
-      case 'network_response': return await tool_networkResponse(input || {});
-      case 'screenshot_snapshot': return await tool_screenshotSnapshot(input || {});
-      case 'screenshot_compare': return await tool_screenshotCompare(input || {});
-      case 'list_windows':   return await tool_listWindows();
-      case 'new_window':     return await tool_newWindow(input || {});
-      case 'focus_window':   return await tool_focusWindow(input || {});
-      case 'close_window':   return await tool_closeWindow(input || {});
-      case 'move_tab':       return await tool_moveTab(input || {});
-      case 'batch':          return await tool_batch(input || {}, ctx);
-      case 'page_summary':   return await tool_pageSummary(input || {});
-      case 'scroll_until':   return await tool_scrollUntil(input || {});
-      case 'dom_snapshot':   return await tool_domSnapshot(input || {});
-      case 'get_value':      return await tool_getValue(input || {});
-      case 'get_attribute':  return await tool_getAttribute(input || {});
-      case 'get_text':       return await tool_getText(input || {});
-      case 'read_storage':   return await tool_readStorage(input || {});
-      case 'write_storage':  return await tool_writeStorage(input || {});
-      case 'read_cookies':   return await tool_readCookies(input || {});
-      case 'clipboard_read': return await tool_clipboardRead();
-      case 'clipboard_write': return await tool_clipboardWrite(input || {});
-      case 'element_screenshot': return await tool_elementScreenshot(input || {});
-      case 'scratchpad_set': return await tool_scratchpadSet(input || {});
-      case 'scratchpad_get': return await tool_scratchpadGet(input || {});
-      case 'scratchpad_list': return await tool_scratchpadList();
-      case 'note_save':      return await tool_noteSave(input || {});
-      case 'note_get':       return await tool_noteGet(input || {});
-      case 'note_list':      return await tool_noteList();
-      case 'note_delete':    return await tool_noteDelete(input || {});
-      case 'get_page_diff':  return await tool_getPageDiff(input || {});
-      case 'list_frames':    return await tool_listFrames(input || {});
-      case 'find_by_text':   return await tool_findByText(input || {});
-      case 'drag_drop':      return await tool_dragDrop(input || {});
-      case 'mouse_drag':     return await tool_mouseDrag(input || {});
-      case 'double_click':   return await tool_doubleClick(input || {});
-      case 'triple_click':   return await tool_tripleClick(input || {});
-      case 'get_page_text':  return await tool_getPageText(input || {});
-      case 'scroll_to':      return await tool_scrollTo(input || {});
-      case 'set_zoom':       return await tool_setZoom(input || {});
-      case 'get_zoom':       return await tool_getZoom(input || {});
-      case 'resize_window':  return await tool_resizeWindow(input || {});
-      case 'upload_image':   return await tool_uploadImage(input || {});
-      case 'update_plan':    return await tool_updatePlan(input || {}, ctx);
-      case 'gif_capture':    return await tool_gifCapture(input || {});
-      case 'ocr_image':      return await tool_ocrImage(input || {}, ctx);
-      case 'set_cookie':     return await tool_setCookie(input || {});
-      case 'delete_cookie':  return await tool_deleteCookie(input || {});
-      case 'clear_cookies':  return await tool_clearCookies(input || {});
-      case 'export_cookies': return await tool_exportCookies(input || {});
-      case 'perf_profile':   return await tool_perfProfile(input || {});
-      case 'a11y_audit':     return await tool_a11yAudit(input || {});
-      case 'mock_api_start': return await tool_mockApiStart(input || {});
-      case 'mock_api_stop':  return await tool_mockApiStop(input || {});
-      case 'attach_file':    return await tool_attachFile(input || {});
-      case 'watch_element':  return await tool_watchElement(input || {});
-      case 'cdp_key':        return await tool_cdpKey(input || {});
-      case 'set_readonly':   return await tool_setReadonly(input || {});
-      case 'stable_ref':     return await tool_stableRef(input || {});
-      case 'group_tabs':     return await tool_groupTabs(input || {});
-      case 'workspace_write':return await tool_workspaceWrite(input || {});
-      case 'workspace_read': return await tool_workspaceRead(input || {});
-      case 'workspace_list': return await tool_workspaceList(input || {});
-      case 'workspace_delete': return await tool_workspaceDelete(input || {});
-      case 'diff_tabs':      return await tool_diffTabs(input || {});
-      case 'check_auth':     return await tool_checkAuth(input || {});
-      case 'worker_console': return await tool_workerConsole(input || {});
-      case 'web_search':     return await tool_webSearch(input || {});
-      case 'youtube_transcript': return await tool_youtubeTranscript(input || {});
-      case 'read_pdf':       return await tool_readPdf(input || {});
-      case 'fetch_url':      return await tool_fetchUrl(input || {});
-      case 'download_file':  return await tool_downloadFile(input || {});
-      case 'save_text':      return await tool_saveText(input || {});
-      case 'wait_for_idle':  return await tool_waitForIdle(input || {});
-      case 'remember':       return await tool_remember(input || {}, ctx);
-      case 'forget':         return await tool_forget(input || {}, ctx);
-      case 'recall_memories': return await tool_recallMemories(ctx);
-      case 'search_kb':      return await tool_searchKb(input || {}, ctx);
-      case 'list_kb':        return await tool_listKb(ctx);
-      default: return { is_error: true, content: `Unknown tool: ${name}` };
+      case 'health_check':       return wrap(await tool_healthCheck(input || {}));
+      case 'conditional_action': return wrap(await tool_conditionalAction(input || {}, ctx));
+      case 'get_page':       return wrap(await tool_getPage(input || {}));
+      case 'read_tab':       return wrap(await tool_getPage({ ...input, tab_id: input?.tab_id }));
+      case 'find_element':   return wrap(await tool_findElement(input || {}));
+      case 'extract_links':  return wrap(await tool_extractLinks(input || {}));
+      case 'get_console':    return wrap(await tool_getConsole(input || {}));
+      case 'click':          return wrap(await tool_click(input || {}));
+      case 'hover':          return wrap(await tool_hover(input || {}));
+      case 'type':           return wrap(await tool_type(input || {}));
+      case 'key_press':      return wrap(await tool_keyPress(input || {}));
+      case 'select_option':  return wrap(await tool_selectOption(input || {}));
+      case 'fill_form':      return wrap(await tool_fillForm(input || {}));
+      case 'scroll':         return wrap(await tool_scroll(input || {}));
+      case 'wait_for':       return wrap(await tool_waitFor(input || {}));
+      case 'wait':           return wrap(await tool_wait(input || {}));
+      case 'navigate':       return wrap(await tool_navigate(input || {}));
+      case 'back':           return wrap(await tool_back(input || {}));
+      case 'forward':        return wrap(await tool_forward(input || {}));
+      case 'reload':         return wrap(await tool_reload(input || {}));
+      case 'screenshot':     return wrap(await tool_screenshot(input || {}));
+      case 'execute_js':     return wrap(await tool_executeJs(input || {}));
+      case 'list_tabs':      return wrap(await tool_listTabs(input || {}));
+      case 'switch_tab':     return wrap(await tool_switchTab(input || {}));
+      case 'new_tab':        return wrap(await tool_newTab(input || {}));
+      case 'close_tab':      return wrap(await tool_closeTab(input || {}));
+      case 'duplicate_tab':  return wrap(await tool_duplicateTab(input || {}));
+      case 'click_and_read':  return wrap(await tool_clickAndRead(input || {}));
+      case 'navigate_and_read': return wrap(await tool_navigateAndRead(input || {}));
+      case 'network_log':    return wrap(await tool_networkLog(input || {}));
+      case 'network_response': return wrap(await tool_networkResponse(input || {}));
+      case 'screenshot_snapshot': return wrap(await tool_screenshotSnapshot(input || {}));
+      case 'screenshot_compare': return wrap(await tool_screenshotCompare(input || {}));
+      case 'list_windows':   return wrap(await tool_listWindows());
+      case 'new_window':     return wrap(await tool_newWindow(input || {}));
+      case 'focus_window':   return wrap(await tool_focusWindow(input || {}));
+      case 'close_window':   return wrap(await tool_closeWindow(input || {}));
+      case 'move_tab':       return wrap(await tool_moveTab(input || {}));
+      case 'batch':          return wrap(await tool_batch(input || {}, ctx));
+      case 'page_summary':   return wrap(await tool_pageSummary(input || {}));
+      case 'scroll_until':   return wrap(await tool_scrollUntil(input || {}));
+      case 'dom_snapshot':   return wrap(await tool_domSnapshot(input || {}));
+      case 'get_value':      return wrap(await tool_getValue(input || {}));
+      case 'get_attribute':  return wrap(await tool_getAttribute(input || {}));
+      case 'get_text':       return wrap(await tool_getText(input || {}));
+      case 'read_storage':   return wrap(await tool_readStorage(input || {}));
+      case 'write_storage':  return wrap(await tool_writeStorage(input || {}));
+      case 'read_cookies':   return wrap(await tool_readCookies(input || {}));
+      case 'clipboard_read': return wrap(await tool_clipboardRead());
+      case 'clipboard_write': return wrap(await tool_clipboardWrite(input || {}));
+      case 'element_screenshot': return wrap(await tool_elementScreenshot(input || {}));
+      case 'scratchpad_set': return wrap(await tool_scratchpadSet(input || {}));
+      case 'scratchpad_get': return wrap(await tool_scratchpadGet(input || {}));
+      case 'scratchpad_list': return wrap(await tool_scratchpadList());
+      case 'note_save':      return wrap(await tool_noteSave(input || {}));
+      case 'note_get':       return wrap(await tool_noteGet(input || {}));
+      case 'note_list':      return wrap(await tool_noteList());
+      case 'note_delete':    return wrap(await tool_noteDelete(input || {}));
+      case 'get_page_diff':  return wrap(await tool_getPageDiff(input || {}));
+      case 'list_frames':    return wrap(await tool_listFrames(input || {}));
+      case 'find_by_text':   return wrap(await tool_findByText(input || {}));
+      case 'drag_drop':      return wrap(await tool_dragDrop(input || {}));
+      case 'mouse_drag':     return wrap(await tool_mouseDrag(input || {}));
+      case 'double_click':   return wrap(await tool_doubleClick(input || {}));
+      case 'triple_click':   return wrap(await tool_tripleClick(input || {}));
+      case 'get_page_text':  return wrap(await tool_getPageText(input || {}));
+      case 'scroll_to':      return wrap(await tool_scrollTo(input || {}));
+      case 'set_zoom':       return wrap(await tool_setZoom(input || {}));
+      case 'get_zoom':       return wrap(await tool_getZoom(input || {}));
+      case 'resize_window':  return wrap(await tool_resizeWindow(input || {}));
+      case 'upload_image':   return wrap(await tool_uploadImage(input || {}));
+      case 'update_plan':    return wrap(await tool_updatePlan(input || {}, ctx));
+      case 'gif_capture':    return wrap(await tool_gifCapture(input || {}));
+      case 'ocr_image':      return wrap(await tool_ocrImage(input || {}, ctx));
+      case 'set_cookie':     return wrap(await tool_setCookie(input || {}));
+      case 'delete_cookie':  return wrap(await tool_deleteCookie(input || {}));
+      case 'clear_cookies':  return wrap(await tool_clearCookies(input || {}));
+      case 'export_cookies': return wrap(await tool_exportCookies(input || {}));
+      case 'perf_profile':   return wrap(await tool_perfProfile(input || {}));
+      case 'a11y_audit':     return wrap(await tool_a11yAudit(input || {}));
+      case 'mock_api_start': return wrap(await tool_mockApiStart(input || {}));
+      case 'mock_api_stop':  return wrap(await tool_mockApiStop(input || {}));
+      case 'attach_file':    return wrap(await tool_attachFile(input || {}));
+      case 'watch_element':  return wrap(await tool_watchElement(input || {}));
+      case 'cdp_key':        return wrap(await tool_cdpKey(input || {}));
+      case 'set_readonly':   return wrap(await tool_setReadonly(input || {}));
+      case 'stable_ref':     return wrap(await tool_stableRef(input || {}));
+      case 'group_tabs':     return wrap(await tool_groupTabs(input || {}));
+      case 'workspace_write':return wrap(await tool_workspaceWrite(input || {}));
+      case 'workspace_read': return wrap(await tool_workspaceRead(input || {}));
+      case 'workspace_list': return wrap(await tool_workspaceList(input || {}));
+      case 'workspace_delete': return wrap(await tool_workspaceDelete(input || {}));
+      case 'diff_tabs':      return wrap(await tool_diffTabs(input || {}));
+      case 'check_auth':     return wrap(await tool_checkAuth(input || {}));
+      case 'worker_console': return wrap(await tool_workerConsole(input || {}));
+      case 'web_search':     return wrap(await tool_webSearch(input || {}));
+      case 'youtube_transcript': return wrap(await tool_youtubeTranscript(input || {}));
+      case 'read_pdf':       return wrap(await tool_readPdf(input || {}));
+      case 'fetch_url':      return wrap(await tool_fetchUrl(input || {}));
+      case 'download_file':  return wrap(await tool_downloadFile(input || {}));
+      case 'save_text':      return wrap(await tool_saveText(input || {}));
+      case 'wait_for_idle':  return wrap(await tool_waitForIdle(input || {}));
+      case 'remember':       return wrap(await tool_remember(input || {}, ctx));
+      case 'forget':         return wrap(await tool_forget(input || {}, ctx));
+      case 'recall_memories': return wrap(await tool_recallMemories(ctx));
+      case 'search_kb':      return wrap(await tool_searchKb(input || {}, ctx));
+      case 'list_kb':        return wrap(await tool_listKb(ctx));
+      default: return wrap({ is_error: true, error_code: ERR_CODES.UNKNOWN_TOOL, content: `Unknown tool: ${name}` });
     }
   } catch (e) {
-    return { is_error: true, content: `Tool ${name} failed: ${e.message || String(e)}` };
+    return wrap({ is_error: true, error_code: ERR_CODES.EXEC_FAILED, content: `Tool ${name} failed: ${e.message || String(e)}` });
   }
 }
 
@@ -2343,11 +2428,23 @@ function executeJsInPage(code) {
 async function tool_listTabs({ all_windows = false }) {
   const opts = all_windows ? {} : { currentWindow: true };
   const tabs = await chrome.tabs.query(opts);
-  // Unique signature so we can tell halusination apart from real output.
   const sig = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  console.log('[moonbridge:list_tabs] sig=' + sig + ' returned', tabs.length, 'tabs');
+  // Structured + human-readable output. JSON block prevents the model from
+  // hallucinating "clean — nothing to commit" or other invented strings.
+  const tabData = tabs.map((t) => ({
+    id: t.id,
+    url: t.url || '(blank)',
+    title: t.title || '',
+    active: !!t.active,
+    audible: !!t.audible,
+    pinned: !!t.pinned,
+    window_id: t.windowId,
+  }));
   const lines = [
-    `---OPEN TABS (${tabs.length}) [sig=${sig}]---`,
+    `MOONBRIDGE_LIST_TABS [sig=${sig}] count=${tabs.length}`,
+    '```json',
+    JSON.stringify(tabData, null, 2),
+    '```',
   ];
   for (const t of tabs) {
     const flags = [];
@@ -2357,9 +2454,7 @@ async function tool_listTabs({ all_windows = false }) {
     const flagStr = flags.length ? ` [${flags.join(',')}]` : '';
     lines.push(`id=${t.id}${flagStr}\n   ${t.url || '(blank)'}\n   ${t.title || ''}`);
   }
-  const out = lines.join('\n');
-  console.log('[moonbridge:list_tabs] output bytes:', out.length, 'first 100:', out.slice(0, 100));
-  return { content: out };
+  return { content: lines.join('\n') };
 }
 
 async function tool_switchTab({ tab_id }) {
@@ -3964,12 +4059,21 @@ async function tool_setZoom({ zoom, tab_id }) {
   const tab = await resolveTab(tab_id);
   const z = Math.max(0.25, Math.min(5, Number(zoom) || 1));
   await chrome.tabs.setZoom(tab.id, z);
-  return { content: `Zoom set to ${z}x on tab ${tab.id}.` };
+  // Verify by reading back — chrome.tabs.setZoom can race; poll briefly until consistent
+  let actual = z;
+  for (let i = 0; i < 5; i++) {
+    await new Promise(r => setTimeout(r, 60));
+    actual = await chrome.tabs.getZoom(tab.id);
+    if (Math.abs(actual - z) < 0.01) break;
+  }
+  return { content: `Zoom set to ${z}x on tab ${tab.id} (verified at ${actual}x).` };
 }
 async function tool_getZoom({ tab_id }) {
   const tab = await resolveTab(tab_id);
-  const z = await chrome.tabs.getZoom(tab.id);
-  return { content: `Current zoom: ${z}x` };
+  // Force refresh — re-fetch the tab object first to clear any stale cache
+  const fresh = await chrome.tabs.get(tab.id);
+  const z = await chrome.tabs.getZoom(fresh.id);
+  return { content: `Current zoom: ${z}x (tab ${fresh.id})` };
 }
 
 // =====================================================================
@@ -5257,4 +5361,137 @@ async function tool_workerConsole({ tab_id, limit = 50 }) {
     lines.push(`  [${l.type}] ctx=${l.context}: ${l.args.slice(0, 200)}`);
   }
   return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// HEALTH CHECK — runtime state snapshot
+// =====================================================================
+
+async function tool_healthCheck() {
+  const out = { ok: true, timestamp: Date.now() };
+
+  // Tab counts
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const activeTab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+    out.tabs = {
+      total: allTabs.length,
+      active_id: activeTab?.id,
+      active_url: activeTab?.url,
+      restricted: allTabs.filter(t => isRestrictedUrl(t.url)).length,
+    };
+  } catch (e) { out.tabs = { error: e.message }; }
+
+  // Workspace
+  try {
+    const ws = await _wsRead();
+    const totalBytes = Object.values(ws).reduce((s, f) => s + (f.size || 0), 0);
+    out.workspace = { files: Object.keys(ws).length, bytes: totalBytes };
+  } catch (e) { out.workspace = { error: e.message }; }
+
+  // Readonly state
+  out.readonly = await _isReadonly();
+
+  // Mock rules
+  out.mocks = {
+    tabs_with_mocks: _MOCK_RULES.size,
+    total_rules: [..._MOCK_RULES.values()].reduce((s, r) => s + r.length, 0),
+  };
+
+  // Nav history (rate limiting)
+  const now = Date.now();
+  let navInWindow = 0;
+  for (const hist of _NAV_HISTORY.values()) {
+    navInWindow += hist.filter(h => now - h.ts < _NAV_WINDOW_MS).length;
+  }
+  out.navigation = {
+    recent_count: navInWindow,
+    limit: _NAV_LIMIT,
+    window_ms: _NAV_WINDOW_MS,
+    tabs_tracked: _NAV_HISTORY.size,
+  };
+
+  // Debugger attached?
+  try {
+    const targets = await chrome.debugger.getTargets();
+    out.debugger = { attached: targets.filter(t => t.attached).length };
+  } catch (e) { out.debugger = { error: e.message }; }
+
+  // Stable refs / claudeRefs (per active tab)
+  if (out.tabs?.active_id) {
+    try {
+      const r = await execIsolated(out.tabs.active_id, () => ({
+        refs: Object.keys(window.__claudeRefs__ || {}).length,
+        stable: Object.keys(window.__claudeStableRefs__ || {}).length,
+      }));
+      out.refs = r;
+    } catch {}
+  }
+
+  // Memory + KB counts (read from chrome.storage)
+  try {
+    const data = await chrome.storage.local.get(['memories', 'kb', 'scheduled']);
+    out.persistence = {
+      memories: (data.memories || []).length,
+      kb_files: (data.kb || []).length,
+      scheduled: (data.scheduled || []).length,
+    };
+  } catch {}
+
+  const lines = [
+    '🟢 MoonBridge HEALTH CHECK',
+    `  Tabs: ${out.tabs?.total} total (${out.tabs?.restricted} restricted)`,
+    `  Active tab: ${out.tabs?.active_id} → ${(out.tabs?.active_url || '').slice(0, 60)}`,
+    `  Workspace: ${out.workspace?.files} files, ${formatBytes(out.workspace?.bytes || 0)}`,
+    `  Readonly: ${out.readonly ? '🔒 LOCKED' : 'unlocked'}`,
+    `  Active mocks: ${out.mocks?.total_rules} rules across ${out.mocks?.tabs_with_mocks} tab(s)`,
+    `  Nav budget: ${out.navigation?.recent_count}/${out.navigation?.limit} in last ${out.navigation?.window_ms / 1000}s`,
+    `  Debugger: ${out.debugger?.attached || 0} target(s) attached`,
+    out.refs ? `  Refs in active tab: ${out.refs.refs} ref-N, ${out.refs.stable} stable` : null,
+    `  Memory: ${out.persistence?.memories} entries, KB: ${out.persistence?.kb_files} files, Scheduled: ${out.persistence?.scheduled} tasks`,
+  ].filter(Boolean);
+  return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// CONDITIONAL ACTION — try chain until one succeeds
+// =====================================================================
+
+async function tool_conditionalAction({ actions }, ctx) {
+  if (!Array.isArray(actions) || !actions.length) {
+    return { is_error: true, error_code: ERR_CODES.INVALID_INPUT,
+             content: 'actions array required.' };
+  }
+  const tried = [];
+  for (const [i, a] of actions.entries()) {
+    if (!a.tool || !a.input) {
+      tried.push({ idx: i, tool: a.tool, error: 'missing tool/input' });
+      continue;
+    }
+    // Recursive call to executeTool — picks up wrapping, readonly, etc.
+    const result = await executeTool(a.tool, a.input, ctx);
+    tried.push({
+      idx: i,
+      tool: a.tool,
+      input_summary: JSON.stringify(a.input).slice(0, 80),
+      ok: !result.is_error,
+      content: (result.content || '').slice(0, 100),
+    });
+    if (!result.is_error) {
+      const lines = [`✓ Conditional matched at action #${i + 1}: ${a.tool}`];
+      lines.push(`  Result: ${(result.content || '').slice(0, 200)}`);
+      if (i > 0) {
+        lines.push('', `  Skipped:`);
+        for (const t of tried.slice(0, i)) {
+          lines.push(`    #${t.idx + 1} ${t.tool} → ${t.content}`);
+        }
+      }
+      return { content: lines.join('\n') };
+    }
+  }
+  const lines = ['✗ All actions failed:'];
+  for (const t of tried) {
+    lines.push(`  #${t.idx + 1} ${t.tool}(${t.input_summary}) → ${t.content || t.error}`);
+  }
+  return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: lines.join('\n') };
 }

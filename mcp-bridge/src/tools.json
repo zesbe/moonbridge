@@ -2135,5 +2135,44 @@
         }
       }
     }
+  },
+  {
+    "name": "health_check",
+    "description": "Get MoonBridge's current runtime state: tab count, network buffer status, workspace size, readonly mode, navigation rate-limit budget, mock rules active, debugger attached. Use to diagnose issues before/after complex operations.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "conditional_action",
+    "description": "Try a chain of tool calls until one succeeds. Useful when target element might be one of several selectors (different layouts / A-B variants / shadow vs light DOM).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "description": "Actions to try in order. Each: {tool: \"click\", input: {selector: \"#btn\"}}",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "tool",
+              "input"
+            ]
+          }
+        }
+      },
+      "required": [
+        "actions"
+      ]
+    }
   }
 ]
