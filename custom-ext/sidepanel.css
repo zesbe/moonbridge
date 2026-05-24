@@ -822,6 +822,25 @@ body {
    Each state retriggers transitions on every new turn — no stale state.
    ===================================================================== */
 
+/* CRITICAL: only the LAST .msg.assistant should ever show streaming state.
+   If multiple are stuck at data-state="streaming" (defensive overlap during
+   ghost cleanup), suppress caret + label on all but the latest. */
+.msg.assistant[data-state="streaming"]:not(:last-of-type) .assistant-body::after {
+  content: none !important;
+}
+.msg.assistant[data-state="streaming"]:not(:last-of-type) .assistant-name::after {
+  content: none !important;
+}
+.msg.assistant[data-state="streaming"]:not(:last-of-type)::before {
+  animation: none !important;
+}
+
+/* Hide entire empty assistant bubbles (no body text content) — they're
+   ghosts from interrupted iterations or empty text_delta chunks. */
+.msg.assistant:has(.assistant-body:empty) {
+  display: none !important;
+}
+
 .msg.assistant[data-state="streaming"] .assistant-body::after {
   content: '▍';
   display: inline-block;

@@ -1932,6 +1932,20 @@ async function runAgentTurn(continuingExisting = false) {
   // Also belt-and-suspenders compact any leftover completed batches that
   // might still be at full size (race with the 3s grace timer).
   compactPreviousTurns();
+  // GHOST CLEANUP: any leftover .msg.assistant still showing
+  // data-state="streaming" or "creating" from a previous (interrupted)
+  // turn must be finalized — otherwise multiple "· streaming" labels
+  // stack up across turns.
+  try {
+    messagesEl.querySelectorAll('.msg.assistant[data-state="streaming"], .msg.assistant[data-state="creating"]').forEach((el) => {
+      el.dataset.state = 'completed';
+      // If the bubble has no body content, remove it entirely
+      const body = el.querySelector('.assistant-body');
+      if (!body || !body.textContent.trim()) {
+        try { el.remove(); } catch {}
+      }
+    });
+  } catch {}
 
   // Start trace
   const lastUser = [...conversation].reverse().find((m) => m.role === 'user');
@@ -1969,9 +1983,21 @@ async function runAgentTurn(continuingExisting = false) {
       if (ev.kind === 'iteration') {
         if (ev.n > 1) appendIterMarker(ev.n);
         if (ev.n === 1) showStatus('Thinking');
-        if (assistantUI && lastTextBufRef.value) {
-          const captured = lastTextBufRef.value;
-          attachAssistantActions(assistantUI.wrap, () => captured);
+        // CRITICAL: finalize previous iteration's bubble before nulling.
+        // Without this, the old bubble stayed at data-state="streaming"
+        // forever — caret kept blinking, "· streaming" label persisted
+        // even though that iteration was done. Result: multiple ghost
+        // streaming bubbles stacked in the chat.
+        if (assistantUI) {
+          if (lastTextBufRef.value && lastTextBufRef.value.trim()) {
+            const captured = lastTextBufRef.value;
+            attachAssistantActions(assistantUI.wrap, () => captured);
+            finalizeAssistantMessage(assistantUI);
+          } else {
+            // No text was produced this iteration — remove the empty
+            // bubble entirely instead of leaving a ghost with caret.
+            try { assistantUI.wrap.remove(); } catch {}
+          }
         }
         // Start a new batch for this iteration's tool calls
         startNewBatch();
@@ -1982,6 +2008,9 @@ async function runAgentTurn(continuingExisting = false) {
         continue;
       }
       if (ev.kind === 'text_delta') {
+        // Skip empty deltas — Anthropic sometimes sends '' at chunk
+        // boundaries, which would create an empty bubble with cursor.
+        if (!ev.text) continue;
         if (!assistantUI) { hideStatus(); assistantUI = createAssistantMessage(); lastAssistantWrap = assistantUI.wrap; }
         textBuf += ev.text;
         lastTextBufRef.value = textBuf;
