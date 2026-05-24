@@ -170,6 +170,39 @@ If same error 2x in a row → STOP & ASK user.
 - **execute_js**: Last resort. Page CSP / Trusted Types may block. Prefer DOM tools.
 - **media_state play_if_paused=true**: Workaround for autoplay throttle.
 
+# SPA & TOAST PATTERNS (v2.1+)
+
+For Single-Page Apps (Oracle Console, Twitter, GSC, Gmail):
+- After click/navigate, use \`wait_for_idle dom_stable_ms=1000\` — waits for both
+  network AND DOM to stop changing. Better than blind \`wait\` for SPAs.
+- After form submit, use \`wait_for_toast text_contains="success"\` to confirm.
+  Detects Material/Antd/Radix/Bootstrap snackbar+toast patterns automatically.
+- When clicking returns \`error_kind=COVERED\` → call \`dismiss_modal\` first
+  (auto-detects cookie banners, OneTrust, X buttons, ESC fallback).
+
+# IFRAME HANDLING
+
+Some sites (Oracle Cloud Console, GSC reports, embedded payment forms) put
+critical content INSIDE iframes. Standard DOM tools see only the outer page.
+
+Detection:
+1. \`get_page\` returns suspiciously sparse content (login form but no buttons)
+2. \`list_frames\` returns 1+ frames
+
+Strategy when iframe detected:
+1. \`list_frames\` → identify the iframe URL
+2. \`execute_js\` with code that walks \`document.querySelectorAll('iframe')\`,
+   accesses \`iframe.contentWindow.document\` for same-origin frames
+3. For cross-origin iframes (Oracle uses these), navigate the agent INTO
+   the iframe URL directly using \`new_tab\` with the frame src
+4. Or use \`fetch_url\` with use_cookies=true to scrape behind-iframe content
+
+Example:
+\`\`\`
+list_frames → [{frame_id: 1, url: "https://console.oracle.com/embed/..."}]
+new_tab url: that frame URL → operate on it as normal page
+\`\`\`
+
 # STYLE
 
 - Casual Indonesian + English mix when user uses bahasa. Match user's tone.
@@ -241,7 +274,23 @@ export async function* runAgent({
     const m = chrome.runtime.getManifest();
     toolsVersion = `MoonBridge tools_version: ${m.version}\n\n`;
   } catch {}
-  const sysText = toolsVersion + memText + userSys + SYSTEM_PROMPT_AGENT;
+  // v2.1: task_context — auto-inject current browser state (tabs, focus,
+  // last action). Helps agent stay oriented across multi-turn workflows.
+  let taskContext = '';
+  try {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const active = tabs.find((t) => t.active);
+    const sortedTabs = tabs.sort((a, b) => (a.active ? -1 : b.active ? 1 : 0)).slice(0, 6);
+    const tabLines = sortedTabs.map((t) => {
+      const flag = t.active ? '★' : t.audible ? '🔊' : ' ';
+      return `  ${flag} tab_id=${t.id}: "${(t.title || '').slice(0, 50)}" (${(t.url || '').slice(0, 60)})`;
+    }).join('\n');
+    taskContext = `# Current browser state (auto-injected)\n` +
+                  `Active tab: ${active ? `id=${active.id} "${(active.title || '').slice(0, 50)}"` : 'none'}\n` +
+                  `Open tabs (${tabs.length} total, showing top 6):\n${tabLines}\n\n` +
+                  `Use tab_id parameter on tools to operate on non-active tabs without switching.\n\n`;
+  } catch {}
+  const sysText = toolsVersion + taskContext + memText + userSys + SYSTEM_PROMPT_AGENT;
   const cc = enableCaching ? { type: 'ephemeral', ttl: cacheTtl } : null;
   const systemBlocks = enableCaching
     ? [{ type: 'text', text: sysText, cache_control: cc }]

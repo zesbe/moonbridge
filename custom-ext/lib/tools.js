@@ -1005,11 +1005,34 @@ export const ALL_TOOLS = [
   // ===== Smart wait =====
   {
     name: 'wait_for_idle',
-    description: 'Wait until network activity stops (no requests for 500ms). Use after click/navigate that triggers async content load. Better than fixed wait().',
+    description: 'Wait until network activity stops (no requests for 500ms). Use after click/navigate that triggers async content load. Set dom_stable_ms to ALSO require DOM to remain unchanged for N ms — stronger signal for SPAs (GSC, Oracle Console, Twitter) that often look idle while still rendering.',
     input_schema: {
       type: 'object',
       properties: {
         timeout_ms: { type: 'integer', description: 'Max wait, default 8000.' },
+        dom_stable_ms: { type: 'integer', description: 'Optional: also require DOM to be stable for N ms. Useful for SPAs. Default 0 (network only).' },
+        tab_id: { type: 'integer' },
+      },
+    },
+  },
+  {
+    name: 'wait_for_toast',
+    description: 'Wait for a toast/snackbar/notification to appear. Detects Material/Antd/Radix/Bootstrap patterns + role=status / role=alert / aria-live. Returns {text, kind}. Use after submit/save actions to confirm success message.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        timeout_ms: { type: 'integer', description: 'Max wait, default 5000.' },
+        text_contains: { type: 'string', description: 'Optional: only return toast that contains this text.' },
+        tab_id: { type: 'integer' },
+      },
+    },
+  },
+  {
+    name: 'dismiss_modal',
+    description: 'Auto-detect and close visible modal/cookie banner/overlay. Tries: close buttons, OneTrust/TrustE accept, X button in dialog, ESC key fallback. Use BEFORE click when error_kind=COVERED.',
+    input_schema: {
+      type: 'object',
+      properties: {
         tab_id: { type: 'integer' },
       },
     },
@@ -2224,6 +2247,8 @@ export async function executeTool(name, input, ctx = {}) {
       case 'download_status': return wrap(await tool_downloadStatus(input || {}));
       case 'save_text':      return wrap(await tool_saveText(input || {}));
       case 'wait_for_idle':  return wrap(await tool_waitForIdle(input || {}));
+      case 'wait_for_toast': return wrap(await tool_waitForToast(input || {}));
+      case 'dismiss_modal':  return wrap(await tool_dismissModal(input || {}));
       case 'remember':       return wrap(await tool_remember(input || {}, ctx));
       case 'forget':         return wrap(await tool_forget(input || {}, ctx));
       case 'recall_memories': return wrap(await tool_recallMemories(ctx));
@@ -2533,9 +2558,12 @@ function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
   const elements = [];
   let ref = 0;
   window.__claudeRefs__ = window.__claudeRefs__ || {};
+  window.__claudeRefMeta__ = window.__claudeRefMeta__ || {};
   for (const c of filtered) {
     ref++;
     window.__claudeRefs__[ref] = c.el;
+    // Capture label/tag metadata for self-healing fallback if element rerenders
+    window.__claudeRefMeta__[ref] = { label: c._label, tag: c._tag, type: c._type };
     elements.push({
       ref,
       tag: c._tag,
@@ -2739,7 +2767,29 @@ function clickInPage(selector, button) {
       const el = window.__claudeRefs__[parseInt(m[1], 10)];
       if (el && el.isConnected) return el;
     }
-    try { return document.querySelector(sel); } catch { return null; }
+    try {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    } catch {}
+    // Self-healing: if selector fails (e.g. #ref-N stale after rerender),
+    // try to recover from the original ref's metadata (cached label/role).
+    if (m && window.__claudeRefMeta__) {
+      const meta = window.__claudeRefMeta__[parseInt(m[1], 10)];
+      if (meta) {
+        // Try by aria-label first
+        if (meta.label) {
+          try {
+            const candidates = [...document.querySelectorAll('button, a, input, select, textarea, [role="button"]')];
+            const lower = meta.label.toLowerCase();
+            const exact = candidates.find((c) => (c.innerText || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase() === lower);
+            if (exact) return exact;
+            const partial = candidates.find((c) => (c.innerText || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase().includes(lower));
+            if (partial) return partial;
+          } catch {}
+        }
+      }
+    }
+    return null;
   }
   const el = resolve(selector);
   if (!el) return { ok: false, error: `Element not found: ${selector}`, error_kind: 'NOT_FOUND' };
@@ -3809,25 +3859,30 @@ async function tool_saveText({ filename, content }) {
 // WAIT FOR NETWORK IDLE
 // =====================================================================
 
-async function tool_waitForIdle({ tab_id, timeout_ms = 8000 }) {
+async function tool_waitForIdle({ tab_id, timeout_ms = 8000, dom_stable_ms = 0 }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
   const cap = Math.min(20000, Math.max(500, timeout_ms || 8000));
-  const result = await execIsolated(tab.id, waitForNetworkIdleInPage, [cap, 500]);
+  // dom_stable_ms (NEW): require DOM to remain unchanged for N ms before
+  // declaring settle. SPAs (GSC, Oracle Console, Twitter) often appear
+  // network-idle while still rendering — DOM stability is a stronger signal.
+  const result = await execIsolated(tab.id, waitForNetworkIdleInPage, [cap, 500, dom_stable_ms || 0]);
   if (!result?.ok) return { is_error: true, content: result?.error || 'Timeout' };
-  return { content: `Network idle after ${result.elapsed}ms.` };
+  return { content: `Settled after ${result.elapsed}ms${dom_stable_ms ? ` (DOM stable for ${dom_stable_ms}ms)` : ''}.` };
 }
 
-function waitForNetworkIdleInPage(timeoutMs, idleMs) {
+function waitForNetworkIdleInPage(timeoutMs, idleMs, domStableMs) {
   return new Promise((resolve) => {
     const start = Date.now();
     let lastActivity = Date.now();
+    let lastDomChange = Date.now();
     let pending = 0;
     let observer = null;
     const origFetch = window.fetch;
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
     function bump() { lastActivity = Date.now(); }
+    function bumpDom() { lastDomChange = Date.now(); lastActivity = Date.now(); }
     try {
       window.fetch = function (...args) {
         pending++; bump();
@@ -3840,7 +3895,7 @@ function waitForNetworkIdleInPage(timeoutMs, idleMs) {
       };
     } catch {}
     if (typeof MutationObserver !== 'undefined') {
-      observer = new MutationObserver(() => bump());
+      observer = new MutationObserver(() => bumpDom());
       try { observer.observe(document.body, { childList: true, subtree: true, attributes: false }); } catch {}
     }
     function check() {
@@ -3849,7 +3904,9 @@ function waitForNetworkIdleInPage(timeoutMs, idleMs) {
         cleanup();
         return resolve({ ok: false, error: 'timeout', elapsed: now - start });
       }
-      if (pending === 0 && now - lastActivity > idleMs) {
+      const networkIdle = pending === 0 && now - lastActivity > idleMs;
+      const domStable = !domStableMs || (now - lastDomChange > domStableMs);
+      if (networkIdle && domStable) {
         cleanup();
         return resolve({ ok: true, elapsed: now - start });
       }
@@ -3861,6 +3918,139 @@ function waitForNetworkIdleInPage(timeoutMs, idleMs) {
     }
     setTimeout(check, 200);
   });
+}
+
+// =====================================================================
+// SMART AGENT QoL — wait_for_toast, dismiss_modal
+// =====================================================================
+
+async function tool_waitForToast({ tab_id, timeout_ms = 5000, text_contains }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  const cap = Math.min(15000, Math.max(500, timeout_ms || 5000));
+  const result = await execIsolated(tab.id, waitForToastInPage, [cap, text_contains || null]);
+  if (!result?.ok) return { is_error: true, error_code: ERR_CODES.TIMEOUT,
+                            content: result?.error || `No toast appeared within ${cap}ms.` };
+  return { content: `Toast detected: "${result.text}" (${result.kind})` };
+}
+
+function waitForToastInPage(timeoutMs, textContains) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    // Common toast patterns across UI libraries
+    const toastSelectors = [
+      '[role="status"]',
+      '[role="alert"]',
+      '[aria-live="polite"]:not([aria-live="off"])',
+      '[aria-live="assertive"]',
+      '.toast', '.snackbar', '.notification',
+      '[class*="oast"]', '[class*="nackbar"]', // Toast/Snackbar variations
+      '[class*="otification"]', // Notification
+      '[data-testid*="toast"]', '[data-testid*="snackbar"]',
+      '.MuiSnackbar-root', '.ant-message', '.ant-notification', // MUI/Antd
+      '[data-state="open"][role="status"]', // Radix Toast
+    ];
+    function check() {
+      for (const sel of toastSelectors) {
+        try {
+          const elems = document.querySelectorAll(sel);
+          for (const el of elems) {
+            if (!el.offsetHeight || !el.offsetWidth) continue;
+            const text = (el.innerText || el.textContent || '').trim();
+            if (!text || text.length > 500) continue;
+            if (textContains && !text.toLowerCase().includes(textContains.toLowerCase())) continue;
+            // Score by selector specificity to identify the kind
+            const kind = sel.includes('alert') ? 'alert' :
+                         sel.includes('status') ? 'status' :
+                         sel.includes('Snackbar') || sel.includes('snackbar') ? 'snackbar' :
+                         sel.includes('toast') || sel.includes('oast') ? 'toast' :
+                         sel.includes('ant-message') ? 'antd-message' :
+                         sel.includes('ant-notification') ? 'antd-notification' :
+                         sel.includes('Mui') ? 'mui' :
+                         'notification';
+            return resolve({ ok: true, text: text.slice(0, 200), kind, selector: sel });
+          }
+        } catch {}
+      }
+      if (Date.now() - start > timeoutMs) {
+        return resolve({ ok: false, error: 'timeout' });
+      }
+      setTimeout(check, 150);
+    }
+    check();
+  });
+}
+
+async function tool_dismissModal({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  const result = await execIsolated(tab.id, dismissModalInPage, []);
+  if (!result?.dismissed) return { content: 'No dismissable modal/banner detected.' };
+  return { content: `Dismissed: ${result.dismissed} (via ${result.method})` };
+}
+
+function dismissModalInPage() {
+  // Common dismiss patterns:
+  // 1. Close button [aria-label="Close" / "Dismiss"]
+  // 2. ESC key (for [role=dialog])
+  // 3. Cookie banner accept buttons
+  // 4. ✕ × X buttons inside overlays
+  const candidates = [
+    // Close buttons
+    '[aria-label="Close" i]:not([disabled])',
+    '[aria-label="Dismiss" i]:not([disabled])',
+    '[aria-label="Tutup" i]:not([disabled])',
+    'button[class*="close" i]:not([disabled])',
+    'button[class*="dismiss" i]:not([disabled])',
+    // Cookie banners — common accept patterns
+    'button[id*="accept" i][id*="cookie" i]',
+    'button[class*="accept" i][class*="cookie" i]',
+    'button#onetrust-accept-btn-handler', // OneTrust
+    'button#truste-consent-button', // TrustE
+    'button[mode="primary"][aria-label*="cept" i]',
+    // Cookie consent (CMP) common patterns
+    'button[data-testid*="accept"]',
+    'button[id*="consent-accept"]',
+  ];
+  function clickIfVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    if (r.width === 0 && r.height === 0) return false;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    el.click();
+    return true;
+  }
+  for (const sel of candidates) {
+    try {
+      const elems = document.querySelectorAll(sel);
+      for (const el of elems) {
+        if (clickIfVisible(el)) {
+          const label = el.textContent?.trim().slice(0, 60) || el.getAttribute('aria-label') || sel;
+          return { dismissed: label, method: `click ${sel}` };
+        }
+      }
+    } catch {}
+  }
+  // Try X / × inside open dialogs
+  try {
+    const openDialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"], dialog[open], .modal.show, [aria-modal="true"]');
+    for (const d of openDialogs) {
+      const xButton = d.querySelector('button:not([disabled])');
+      if (xButton && /^[×✕✖❌]$/.test((xButton.textContent || '').trim())) {
+        xButton.click();
+        return { dismissed: 'dialog X button', method: 'click ×' };
+      }
+    }
+  } catch {}
+  // Last resort: ESC key
+  try {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true }));
+    return { dismissed: 'ESC key fallback', method: 'keyboard' };
+  } catch {}
+  return { dismissed: null };
 }
 
 // =====================================================================

@@ -1656,7 +1656,7 @@
   },
   {
     "name": "wait_for_idle",
-    "description": "Wait until network activity stops (no requests for 500ms). Use after click/navigate that triggers async content load. Better than fixed wait().",
+    "description": "Wait until network activity stops (no requests for 500ms). Use after click/navigate that triggers async content load. Set dom_stable_ms to ALSO require DOM to remain unchanged for N ms — stronger signal for SPAs (GSC, Oracle Console, Twitter) that often look idle while still rendering.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1664,6 +1664,42 @@
           "type": "integer",
           "description": "Max wait, default 8000."
         },
+        "dom_stable_ms": {
+          "type": "integer",
+          "description": "Optional: also require DOM to be stable for N ms. Useful for SPAs. Default 0 (network only)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "wait_for_toast",
+    "description": "Wait for a toast/snackbar/notification to appear. Detects Material/Antd/Radix/Bootstrap patterns + role=status / role=alert / aria-live. Returns {text, kind}. Use after submit/save actions to confirm success message.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max wait, default 5000."
+        },
+        "text_contains": {
+          "type": "string",
+          "description": "Optional: only return toast that contains this text."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "dismiss_modal",
+    "description": "Auto-detect and close visible modal/cookie banner/overlay. Tries: close buttons, OneTrust/TrustE accept, X button in dialog, ESC key fallback. Use BEFORE click when error_kind=COVERED.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
         "tab_id": {
           "type": "integer"
         }

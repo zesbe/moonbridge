@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "2.0.0",
-  "description": "Smart browser automation agent — 153 tools, 3-mantra doctrine (LOOK FIRST, ASK IF UNSURE, VERIFY DONE), agent-only mode, Trusted Types–aware",
+  "version": "2.1.0",
+  "description": "Smart browser automation agent — 155 tools, SPA-aware (dom_stable_ms), toast/modal handlers, self-healing selectors, task_context auto-injection, iframe patterns, smart agent doctrine",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
