@@ -9,6 +9,11 @@ import { promptsAdapter } from './lib/prompts.js';
 import { scheduledAdapter } from './lib/scheduled.js';
 import { tracesAdapter } from './lib/traces.js';
 import { mcpClient } from './lib/mcp-client.js';
+import {
+  logger, debounce, rafThrottle, jsonSize, fmtBytes,
+  sanitizeChat, sanitizeConversation,
+  safeStorageSet, reportStorageUsage, pruneOldBlobs,
+} from './lib/storage.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -91,7 +96,6 @@ let savedRecordings = [];
 // Conversation persistence
 let currentChatId = null;
 let savedChats = []; // [{id, title, mode, model, conversation, updatedAt}]
-let saveTimer = null;
 
 // Pending attachments for next send
 let pendingAttachments = []; // [{id, name, mime, size, kind, dataUrl?, text?, base64?}]
@@ -143,12 +147,10 @@ async function loadSettings() {
       if (newTools.length) {
         for (const n of newTools) stored.add(n);
         // Persist immediately so next reload sees the merged set
-        try {
-          await chrome.storage.local.set({
-            agentPrefs: { ...data.agentPrefs, toolWhitelist: [...stored] },
-          });
-        } catch {}
-        console.log(`[MoonBridge] Auto-enabled ${newTools.length} new tools added since last session.`);
+        await safeStorageSet({
+          agentPrefs: { ...data.agentPrefs, toolWhitelist: [...stored] },
+        });
+        logger.info(`auto-enabled ${newTools.length} new tools added since last session.`);
       }
       toolWhitelist = stored;
     }
@@ -157,23 +159,46 @@ async function loadSettings() {
   approvalModeSel.value = approvalModeVal;
   savedRecordings = data.recordings || [];
   savedChats = data.chats || [];
+
+  // Storage diagnostics on boot
+  reportStorageUsage().catch(() => {});
+  // Drop blobs older than a week (one-shot)
+  pruneOldBlobs().catch(() => {});
 }
 
 async function saveAgentPrefs() {
-  await chrome.storage.local.set({
+  await safeStorageSet({
     agentPrefs: { toolWhitelist: [...toolWhitelist], approvalMode: approvalModeVal },
   });
 }
-async function saveRecordings() { await chrome.storage.local.set({ recordings: savedRecordings }); }
+async function saveRecordings() {
+  await safeStorageSet({ recordings: savedRecordings });
+}
 
-async function persistChats() { await chrome.storage.local.set({ chats: savedChats }); }
+// ---------- Chat persistence (debounced + sanitized + quota-safe) ----------
+const MAX_SAVED_CHATS = 20;
+const MAX_MSGS_PER_CHAT = 30;
+
+async function persistChats() {
+  await safeStorageSet({ chats: savedChats }, {
+    onTrim: (n) => logger.warn(`auto-trimmed ${n} oldest chats due to quota pressure`),
+  });
+}
+
+// Debounced version — coalesces noisy in-stream saves to one write per 800ms.
+const _debouncedSaveCurrent = debounce(_saveCurrentChatNow, 800);
 
 function scheduleChatSave() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveCurrentChat, 800);
+  // Fire-and-forget; the debounced fn handles its own promise.
+  _debouncedSaveCurrent();
 }
 
 async function saveCurrentChat() {
+  // Public API: bypass debounce when caller explicitly awaits a save.
+  return _debouncedSaveCurrent.flush();
+}
+
+async function _saveCurrentChatNow() {
   if (!conversation.length) return;
   const now = Date.now();
   if (!currentChatId) currentChatId = 'chat_' + now + '_' + Math.random().toString(36).slice(2, 8);
@@ -195,20 +220,22 @@ async function saveCurrentChat() {
       title = 'Untitled';
     }
   }
-  const entry = {
+  // Sanitize: strip image/document base64, trim long text, cap message count.
+  const entry = sanitizeChat({
     id: currentChatId,
     title,
     titleEdited: !!existing?.titleEdited,
     mode,
     model: modelSelect.value || settings.defaultModel,
-    conversation: conversation,
+    conversation,
     updatedAt: now,
-  };
+  }, { maxMessages: MAX_MSGS_PER_CHAT });
+
   const idx = savedChats.findIndex((c) => c.id === currentChatId);
   if (idx >= 0) savedChats[idx] = entry;
   else savedChats.unshift(entry);
-  // Keep last 100
-  if (savedChats.length > 100) savedChats = savedChats.slice(0, 100);
+  // Cap saved chats hard.
+  if (savedChats.length > MAX_SAVED_CHATS) savedChats = savedChats.slice(0, MAX_SAVED_CHATS);
   await persistChats();
   if (!historyPanel.classList.contains('hidden')) renderHistory();
 }
@@ -916,7 +943,7 @@ async function recordFeedback(msgIdx, kind, text) {
       msgIdx,
     });
     if (feedback.length > 500) feedback.shift();
-    await chrome.storage.local.set({ feedback });
+    await safeStorageSet({ feedback });
   } catch {}
 }
 
@@ -1510,28 +1537,54 @@ function summarizeInput(name, input) {
   }
 }
 
+// rAF-throttled markdown renderer — coalesces streaming deltas into one paint.
+// Uses a per-target queue keyed by the body element, so multiple concurrent
+// streams don't stomp each other.
+const _renderQueue = new WeakMap();
+function streamRender(text, target) {
+  _renderQueue.set(target, text);
+  if (target.__mbRenderScheduled) return;
+  target.__mbRenderScheduled = true;
+  requestAnimationFrame(() => {
+    target.__mbRenderScheduled = false;
+    const latest = _renderQueue.get(target);
+    if (latest != null) renderMarkdown(latest, target);
+  });
+}
+
+// rAF-throttled scroll: coalesces high-frequency calls (one per paint).
+const _scrollFollow = rafThrottle(() => {
+  if (!userScrolledUp) {
+    _programmaticScroll = true;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (jumpPill) jumpPill.classList.remove('show');
+    requestAnimationFrame(() => { _programmaticScroll = false; });
+  } else {
+    if (jumpPill) jumpPill.classList.add('show');
+  }
+});
+
 function scrollToBottom(force = false) {
   // Always scroll if forced, OR if user hasn't manually scrolled up.
   // The old logic ("near bottom" 80px check) failed during streaming —
   // long responses pushed content past the threshold even when user was
   // following along, then auto-scroll silently stopped.
-  if (force || !userScrolledUp) {
+  if (force) {
     _programmaticScroll = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
     if (jumpPill) jumpPill.classList.remove('show');
-    // Reset flag on next tick so user-initiated scrolls register correctly
-    setTimeout(() => { _programmaticScroll = false; }, 0);
-  } else {
-    if (jumpPill) jumpPill.classList.add('show');
+    requestAnimationFrame(() => { _programmaticScroll = false; });
+    return;
   }
+  _scrollFollow();
 }
 
 function forceScrollToBottom() {
+  userScrolledUp = false;
   _programmaticScroll = true;
   messagesEl.scrollTop = messagesEl.scrollHeight;
   if (jumpPill) jumpPill.classList.remove('show');
-  userScrolledUp = false;
-  setTimeout(() => { _programmaticScroll = false; }, 0);
+  requestAnimationFrame(() => { _programmaticScroll = false; });
 }
 
 // Track whether the user has deliberately scrolled away from the bottom.
@@ -1656,7 +1709,7 @@ async function sendChat(userText, userContent) {
       } else if (ev.type === 'text') {
         hideStatus();
         textBuf += ev.data;
-        renderMarkdown(textBuf, ui.body);
+        streamRender(textBuf, ui.body);
         scrollToBottom();
       } else if (ev.type === 'usage') {
         showUsage(ev.data);
@@ -1750,7 +1803,7 @@ async function runAgentTurn(continuingExisting = false) {
         if (!assistantUI) { hideStatus(); assistantUI = createAssistantMessage(); lastAssistantWrap = assistantUI.wrap; }
         textBuf += ev.text;
         lastTextBufRef.value = textBuf;
-        renderMarkdown(textBuf, assistantUI.body);
+        streamRender(textBuf, assistantUI.body);
         scrollToBottom();
       } else if (ev.kind === 'thinking_delta') {
         if (!thinkStream) thinkStream = createThinkingStream();
@@ -2418,7 +2471,7 @@ document.body.addEventListener('drop', async (e) => {
 
 modelSelect.addEventListener('change', () => {
   settings.defaultModel = modelSelect.value;
-  chrome.storage.local.set({ settings });
+  safeStorageSet({ settings });
   // Switch to manual since user picked specifically
   if (speedSelect.value !== 'manual') speedSelect.value = 'manual';
 });
@@ -2442,13 +2495,13 @@ function applySpeedPreset(preset) {
   if (opt) {
     modelSelect.value = opt.value;
     settings.defaultModel = opt.value;
-    chrome.storage.local.set({ settings });
+    safeStorageSet({ settings });
   }
 }
 
 speedSelect.addEventListener('change', () => {
   applySpeedPreset(speedSelect.value);
-  chrome.storage.local.set({ speedPreset: speedSelect.value });
+  safeStorageSet({ speedPreset: speedSelect.value });
 });
 
 // =====================================================================
@@ -2465,7 +2518,7 @@ function setCliStatus(status) {
   cliBtn.dataset.status = status;
   cliBtn.title = CLI_TITLES[status] || status;
   // Persist user intent (auto-reconnect next session)
-  if (status === 'connected') chrome.storage.local.set({ mcpEnabled: true });
+  if (status === 'connected') safeStorageSet({ mcpEnabled: true });
 }
 
 mcpClient.onStatus = setCliStatus;
@@ -2477,7 +2530,7 @@ cliBtn.addEventListener('click', async () => {
     mcpClient.connect();
   } else {
     mcpClient.disconnect();
-    await chrome.storage.local.set({ mcpEnabled: false });
+    await safeStorageSet({ mcpEnabled: false });
     setHint('Disconnected from Claude Code bridge.');
   }
 });
