@@ -1239,7 +1239,11 @@ let _currentBatch = null;
 const _toolToItem = new Map(); // tool_use_id -> { item, card, batch }
 
 function ensureBatchForCurrentTurn() {
-  if (_currentBatch && !_currentBatch.dataset.completed) return _currentBatch;
+  // Option E: ONE timeline per TURN — reuse if exists.
+  // Old behavior was one-per-iteration which stacked DOM across iterations.
+  if (_currentBatch && _currentBatch.isConnected && !_currentBatch.dataset.turnEnded) {
+    return _currentBatch;
+  }
   ensureNoEmpty();
 
   const wrap = document.createElement('div');
@@ -1272,14 +1276,13 @@ function ensureBatchForCurrentTurn() {
   wrap.appendChild(head);
   wrap.appendChild(body);
 
-  // Auto-collapse old completed batches
-  const olderBatches = messagesEl.querySelectorAll('.activity-batch.completed:not(.collapsed)');
-  if (olderBatches.length > 1) {
-    olderBatches[olderBatches.length - 2].classList.add('collapsed');
-  }
-
   head.addEventListener('click', () => {
-    wrap.classList.toggle('collapsed');
+    // Mini chips (previous turns) toggle .expanded; running batches toggle .collapsed
+    if (wrap.classList.contains('mini')) {
+      wrap.classList.toggle('expanded');
+    } else {
+      wrap.classList.toggle('collapsed');
+    }
   });
 
   messagesEl.appendChild(wrap);
@@ -1339,27 +1342,43 @@ function batchUpdateProgress(batch) {
   }
 }
 
+// =====================================================================
+// Option E — Hybrid timeline: ONE batch per TURN.
+// finalizeBatch is called at TURN END (whole agent done streaming).
+// startNewBatch is called at ITERATION boundary — but with one-batch-
+// per-turn we just record progress, no DOM mutation.
+// =====================================================================
+
 function finalizeBatch() {
   if (_currentBatch) {
     const b = _currentBatch;
     b.classList.remove('running', 'pending');
+    // Mark turnEnded so ensureBatchForCurrentTurn creates a NEW batch on
+    // the next turn instead of reusing this one.
+    b.dataset.turnEnded = '1';
     if (b.dataset.failed && parseInt(b.dataset.failed) > 0) {
       b.classList.add('failed');
     } else {
       b.classList.add('completed');
       b.dataset.completed = '1';
-      // Trigger a quick "celebrate" animation — green flash on status dot,
-      // checkmark fade-in, etc. Lets the user enjoy the success state
-      // before anything starts collapsing.
+      // Celebrate animation: green pulse on status dot + lift on the card
       requestAnimationFrame(() => b.classList.add('celebrating'));
-      // Longer read window — was 1.4s, now 3.2s so the live-streaming
-      // animation feels intentional, not a flicker. Falls back to graceful
-      // fade-out (not instant yeet) on next batch start.
+      // Update title to summary form: "Done · N steps · Xs"
+      try {
+        const total = parseInt(b.dataset.total || '0', 10);
+        const startTs = parseInt(b.dataset.createdAt || '0', 10);
+        const elapsed = startTs ? ((Date.now() - startTs) / 1000).toFixed(1) : null;
+        const titleEl = b.querySelector('.batch-title span:first-child');
+        if (titleEl) {
+          titleEl.textContent = `Done${total ? ` · ${total} step${total > 1 ? 's' : ''}` : ''}${elapsed ? ` · ${elapsed}s` : ''}`;
+        }
+      } catch {}
+      // After read window, soft-collapse body but keep header visible.
+      // User can click to re-expand. No DOM destroy unless next turn comes.
       setTimeout(() => {
         if (!b.isConnected || b.classList.contains('failed')) return;
-        // Soft compact: collapse body but keep summary chip visible briefly
-        b.classList.add('auto-compact', 'collapsed');
-      }, 3200);
+        b.classList.add('auto-compact', 'collapsed', 'turn-summary');
+      }, 3000);
     }
     b.dataset.completed = '1';
   }
@@ -1367,35 +1386,36 @@ function finalizeBatch() {
 }
 
 function startNewBatch() {
-  if (_currentBatch) {
-    const b = _currentBatch;
-    b.classList.remove('running', 'pending');
-    b.classList.add('completed');
-    b.dataset.completed = '1';
-    if (!b.classList.contains('failed')) {
-      // Previous batch fades out gracefully — was instant remove, now
-      // animates out so user sees it acknowledged before disappearing.
-      gracefulRemoveBatch(b);
-    }
+  // Option E: ITERATION boundary within a turn. The batch persists across
+  // iterations so the timeline keeps growing. We just emit a tiny visual
+  // separator in the batch body so the user sees where one iteration ended
+  // and the next began.
+  if (_currentBatch && _currentBatch.isConnected && !_currentBatch.dataset.turnEnded) {
+    const sep = document.createElement('div');
+    sep.className = 'iter-separator';
+    sep.dataset.iter = String((parseInt(_currentBatch.dataset.iter || '0', 10) + 1));
+    _currentBatch.dataset.iter = sep.dataset.iter;
+    const body = _currentBatch.querySelector('.batch-body');
+    if (body) body.appendChild(sep);
   }
-  _currentBatch = null;
-  // Reap any older completed-but-not-failed batches that have lingered too
-  // long (>10s old) so DOM doesn't accumulate. Recent ones get to live.
-  try {
-    const now = Date.now();
-    messagesEl.querySelectorAll('.activity-batch.completed:not(.failed)').forEach((el) => {
-      const created = parseInt(el.dataset.createdAt || '0', 10);
-      if (created && now - created > 10000) {
-        gracefulRemoveBatch(el);
-      }
-    });
-  } catch {}
 }
 
 function gracefulRemoveBatch(b) {
   if (!b?.isConnected) return;
   b.classList.add('shrinking');
   setTimeout(() => { try { b.remove(); } catch {} }, 360);
+}
+
+// Called when a new turn begins (user sends a new message). Compacts
+// previously-completed turn-summaries to small chips so they don't pile up.
+function compactPreviousTurns() {
+  try {
+    messagesEl.querySelectorAll('.activity-batch.turn-summary:not(.mini)').forEach((el) => {
+      el.classList.add('mini');           // compact display
+      el.classList.add('collapsed');      // ensure body hidden
+      el.classList.remove('auto-compact'); // remove transition class
+    });
+  } catch {}
 }
 
 function createActivityItem(toolName) {
@@ -1948,6 +1968,10 @@ async function send() {
   // Snapshot attachments for this send
   const attachments = pendingAttachments.slice();
   const userContent = buildUserContent(text, attachments);
+
+  // Option E: collapse previous turn-summaries to mini chips before
+  // starting a new turn so completed timelines stack compactly.
+  compactPreviousTurns();
 
   appendUserMessage(text, true, attachments);
   inputEl.value = '';

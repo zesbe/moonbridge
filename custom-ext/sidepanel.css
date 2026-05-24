@@ -1339,6 +1339,105 @@ body {
 .activity-batch.shrinking::after,
 .activity-batch.shrinking::before { display: none !important; }
 .activity-batch.failed { border-color: rgba(231, 76, 60, 0.28); }
+
+/* =====================================================================
+   Option E — Hybrid timeline: ONE batch per turn.
+   When turn ends → batch becomes a "turn-summary" (collapsed but visible).
+   On next turn → previous summaries shrink to ".mini" chips.
+   ===================================================================== */
+
+/* Iteration separator — small horizontal line in the body where one
+   tool-use iteration ended and the next began. */
+.iter-separator {
+  height: 1px;
+  margin: 8px 0 8px 30px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(217, 119, 87, 0.20) 35%,
+    rgba(217, 119, 87, 0.10) 100%);
+  position: relative;
+  animation: sep-fade-in 320ms var(--ease);
+}
+.iter-separator::before {
+  content: '↻';
+  position: absolute;
+  left: -24px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  color: rgba(217, 119, 87, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+@keyframes sep-fade-in {
+  from { opacity: 0; transform: scaleX(0.4); }
+  to   { opacity: 1; transform: scaleX(1); }
+}
+
+/* Turn-summary — finalized batch, body collapsed, header shows
+   "Done · N steps · Xs". Click anywhere on header to re-expand. */
+.activity-batch.turn-summary {
+  border-color: rgba(74, 222, 128, 0.18);
+  background:
+    linear-gradient(180deg, rgba(74, 222, 128, 0.025) 0%, rgba(28, 27, 26, 0.4) 100%);
+}
+.activity-batch.turn-summary .batch-title { color: var(--text-muted); }
+.activity-batch.turn-summary .batch-status {
+  background: rgba(74, 222, 128, 0.65);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
+}
+
+/* Mini — collapsed turn-summary from a previous turn. Minimal chip. */
+.activity-batch.mini {
+  max-width: 60% !important;
+  margin: 4px 0 4px 33px;
+  border-radius: 999px;
+  background: rgba(28, 27, 26, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  box-shadow: none !important;
+  opacity: 0.55;
+  transition: all 280ms var(--ease);
+}
+.activity-batch.mini:hover {
+  opacity: 1;
+  border-color: rgba(217, 119, 87, 0.18) !important;
+  background: rgba(28, 27, 26, 0.5) !important;
+}
+.activity-batch.mini .batch-head {
+  padding: 5px 12px;
+}
+.activity-batch.mini .batch-status {
+  width: 6px;
+  height: 6px;
+}
+.activity-batch.mini .batch-title {
+  font-size: 11px;
+  font-weight: 400;
+}
+.activity-batch.mini .batch-progress {
+  font-size: 9.5px;
+  padding: 0 4px;
+}
+.activity-batch.mini .batch-chevron {
+  font-size: 7.5px;
+}
+.activity-batch.mini .batch-body { display: none !important; }
+@media (prefers-color-scheme: light) {
+  .activity-batch.mini {
+    background: rgba(247, 245, 238, 0.45) !important;
+    border-color: rgba(0, 0, 0, 0.04) !important;
+  }
+}
+
+/* When user clicks a mini-chip, it can re-expand */
+.activity-batch.mini.expanded {
+  max-width: 80% !important;
+  border-radius: 13px;
+  opacity: 1;
+}
+.activity-batch.mini.expanded .batch-body { display: block !important; }
 .activity-batch.failed::before {
   content: '';
   position: absolute;
