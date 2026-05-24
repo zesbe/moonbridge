@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "1.7.14",
-  "description": "Powerful AI sidepanel + browser agent for any Anthropic-compatible endpoint — 153 tools, compact post-task screenshots, ghost-free streaming, multi-turn timeline, hot-reload",
+  "version": "2.0.0",
+  "description": "Smart browser automation agent — 153 tools, 3-mantra doctrine (LOOK FIRST, ASK IF UNSURE, VERIFY DONE), agent-only mode, Trusted Types–aware",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",

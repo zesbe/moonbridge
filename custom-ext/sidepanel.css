@@ -151,32 +151,36 @@ body {
 .icon-btn:active { transform: scale(0.94); }
 .icon-btn.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(217, 119, 87, 0.20); }
 
-.mode-toggle {
+/* Agent badge — replaces old chat/agent toggle in v2.0+ */
+.agent-badge {
   display: inline-flex;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 2px;
-  flex-shrink: 0;
-}
-.mode-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  padding: 4px 11px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all var(--transition);
+  align-items: center;
+  gap: 5px;
+  background:
+    linear-gradient(180deg, rgba(217, 119, 87, 0.12) 0%, rgba(217, 119, 87, 0.04) 100%),
+    rgba(28, 27, 26, 0.6);
+  border: 1px solid rgba(217, 119, 87, 0.22);
+  color: var(--accent);
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: -0.01em;
+  flex-shrink: 0;
+  backdrop-filter: blur(6px) saturate(140%);
+  -webkit-backdrop-filter: blur(6px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    0 0 12px rgba(217, 119, 87, 0.10);
+  user-select: none;
 }
-.mode-btn:hover { color: var(--text); }
-.mode-btn.active {
-  background: var(--accent);
-  color: white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.20);
+@media (prefers-color-scheme: light) {
+  .agent-badge {
+    background:
+      linear-gradient(180deg, rgba(217, 119, 87, 0.15) 0%, rgba(217, 119, 87, 0.05) 100%),
+      rgba(255, 255, 255, 0.7);
+  }
 }
 
 .model-select, .speed-select {

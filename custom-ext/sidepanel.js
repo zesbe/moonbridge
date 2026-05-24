@@ -1,4 +1,4 @@
-import { streamMessages, listModels } from './lib/api.js';
+import { listModels } from './lib/api.js';
 import { renderMarkdown } from './lib/markdown.js';
 import { runAgent } from './lib/agent.js';
 import { ALL_TOOLS } from './lib/tools.js';
@@ -30,8 +30,6 @@ const overflowMenu = $('overflowMenu');
 const modelSelect = $('modelSelect');
 const speedSelect = $('speedSelect');
 const cliBtn = $('cliBtn');
-const modeChatBtn = $('modeChat');
-const modeAgentBtn = $('modeAgent');
 const hintEl = $('hint');
 const recBadge = $('recBadge');
 
@@ -85,7 +83,7 @@ let libTab = 'memory';
 
 // --- State ---
 let settings = null;
-let mode = 'chat';
+const mode = 'agent'; // Agent-only mode — chat mode removed in v2.0
 let conversation = [];
 let abortCtrl = null;
 let toolWhitelist = new Set(ALL_TOOLS.map((t) => t.name));
@@ -442,7 +440,7 @@ function countTurns(conv) {
 async function loadChat(c) {
   currentChatId = c.id;
   conversation = JSON.parse(JSON.stringify(c.conversation || [])); // deep clone
-  setMode(c.mode || 'chat', false);
+  // mode is always 'agent' now
   // Try to set the same model
   if (c.model) {
     const found = [...modelSelect.options].find((o) => o.value === c.model);
@@ -587,7 +585,6 @@ async function stopRecordingAndSave() {
 
 async function replayRecording(rec) {
   setHint(`Replaying "${rec.name}"…`);
-  setMode('agent');
   const lines = [`Replay these recorded steps in order:`];
   for (let i = 0; i < rec.steps.length; i++) {
     const s = rec.steps[i];
@@ -879,13 +876,7 @@ function attachAssistantActions(wrap, getText, msgIdx) {
     if (abortCtrl) return;
     while (conversation.length && conversation[conversation.length - 1].role !== 'user') conversation.pop();
     renderConversation();
-    if (mode === 'agent') await runAgentTurn();
-    else {
-      const last = conversation[conversation.length - 1];
-      const userText = typeof last?.content === 'string' ? last.content : '';
-      conversation.pop();
-      await sendChat(userText, last?.content || userText);
-    }
+    await runAgentTurn();
   });
 
   const branch = makeAction('🌿', 'Branch', async () => {
@@ -1836,75 +1827,6 @@ function setStreaming(streaming) {
   if (last) last.classList.toggle('streaming', streaming);
 }
 
-function setMode(next, resetConv = true) {
-  if (mode === next && !resetConv) return;
-  mode = next;
-  modeChatBtn.classList.toggle('active', mode === 'chat');
-  modeAgentBtn.classList.toggle('active', mode === 'agent');
-  modeChatBtn.setAttribute('aria-selected', mode === 'chat');
-  modeAgentBtn.setAttribute('aria-selected', mode === 'agent');
-  inputEl.placeholder = mode === 'agent' ? 'Tell the agent what to do…' : 'Message MoonBridge…';
-  if (resetConv) {
-    conversation = [];
-    currentChatId = null;
-    renderEmptyState();
-  }
-}
-
-// =====================================================================
-// CHAT MODE
-// =====================================================================
-
-async function sendChat(userText, userContent) {
-  conversation.push({ role: 'user', content: userContent });
-  const ui = createAssistantMessage();
-  showStatus('Thinking');
-  let textBuf = '';
-  let thinkBuf = '';
-  abortCtrl = new AbortController();
-  setStreaming(true);
-  try {
-    for await (const ev of streamMessages({
-      baseUrl: settings.baseUrl, apiToken: settings.apiToken,
-      model: modelSelect.value || settings.defaultModel,
-      system: settings.systemPrompt, messages: conversation,
-      temperature: settings.temperature, maxTokens: settings.maxTokens,
-      signal: abortCtrl.signal,
-    })) {
-      if (ev.type === 'thinking') {
-        hideStatus();
-        thinkBuf += ev.data;
-        ui.thinkBlock.classList.remove('hidden');
-        ui.thinkBody.textContent = thinkBuf;
-        scrollToBottom();
-      } else if (ev.type === 'text') {
-        hideStatus();
-        textBuf += ev.data;
-        streamRender(textBuf, ui.body);
-        scrollToBottom();
-      } else if (ev.type === 'usage') {
-        showUsage(ev.data);
-      } else if (ev.type === 'error') {
-        appendError(ev.data); textBuf = ''; break;
-      } else if (ev.type === 'done') break;
-    }
-  } catch (e) {
-    appendError(`Unexpected: ${e.message}`);
-  } finally {
-    hideStatus();
-    setStreaming(false);
-    abortCtrl = null;
-    if (textBuf) {
-      conversation.push({ role: 'assistant', content: textBuf });
-      attachAssistantActions(ui.wrap, () => textBuf, conversation.length - 1);
-      finalizeAssistantMessage(ui);
-      scheduleChatSave();
-    } else {
-      conversation.pop();
-    }
-  }
-}
-
 function showUsage(u) {
   const parts = [];
   if (u.input_tokens != null) parts.push(`in ${u.input_tokens}`);
@@ -1915,7 +1837,7 @@ function showUsage(u) {
 }
 
 // =====================================================================
-// AGENT MODE
+// AGENT MODE — only mode in v2.0+ (chat mode removed)
 // =====================================================================
 
 async function runAgentTurn(continuingExisting = false) {
@@ -2126,8 +2048,7 @@ async function send() {
   clearPendingAttachments();
   autoResize();
 
-  if (mode === 'agent') await sendAgent(text, userContent, attachments);
-  else await sendChat(text, userContent);
+  await sendAgent(text, userContent, attachments);
 }
 
 // Slash commands run locally — no model roundtrip, no token spend.
@@ -2455,8 +2376,7 @@ async function renderScheduledTab() {
     const name = prompt('Task name:'); if (!name) return;
     const promptText = prompt('Prompt to run:'); if (!promptText) return;
     const schedule = prompt('Schedule (once, hourly, daily, weekly):', 'daily') || 'daily';
-    const modeS = prompt('Mode (chat or agent):', 'agent') || 'agent';
-    await scheduledAdapter.add({ name, prompt: promptText, mode: modeS, schedule });
+    await scheduledAdapter.add({ name, prompt: promptText, mode: 'agent', schedule });
     renderScheduledTab();
   });
   libBody.appendChild(add);
@@ -2615,8 +2535,7 @@ newChatBtn.addEventListener('click', newChat);
 historyBtn.addEventListener('click', () => historyPanel.classList.contains('hidden') ? openHistory() : closeHistory());
 historyClose.addEventListener('click', closeHistory);
 historySearch.addEventListener('input', (e) => renderHistory(e.target.value));
-modeChatBtn.addEventListener('click', () => setMode('chat'));
-modeAgentBtn.addEventListener('click', () => setMode('agent'));
+// Mode toggle removed in v2.0 — agent-only
 
 // Overflow menu
 overflowBtn.addEventListener('click', (e) => {
@@ -2912,7 +2831,7 @@ async function runPendingScheduledIfAny() {
     return;
   }
   await chrome.storage.local.remove(['pendingScheduled']);
-  setMode(pendingScheduled.mode === 'agent' ? 'agent' : 'chat');
+  // Always agent mode in v2.0+
   if (pendingScheduled.model) {
     const found = [...modelSelect.options].find((o) => o.value === pendingScheduled.model);
     if (found) modelSelect.value = pendingScheduled.model;

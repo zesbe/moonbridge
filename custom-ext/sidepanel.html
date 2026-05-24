@@ -9,11 +9,8 @@
 <body>
   <header class="topbar">
     <button id="historyBtn" class="icon-btn" title="History">☰</button>
-    <button id="newChatBtn" class="icon-btn" title="New chat">＋</button>
-    <div class="mode-toggle" role="tablist" aria-label="Mode">
-      <button id="modeChat" class="mode-btn active" role="tab" aria-selected="true">Chat</button>
-      <button id="modeAgent" class="mode-btn" role="tab" aria-selected="false">Agent</button>
-    </div>
+    <button id="newChatBtn" class="icon-btn" title="New session">＋</button>
+    <div class="agent-badge" title="Browser Automation Agent">🌙 Agent</div>
     <select id="modelSelect" class="model-select" title="Select model"></select>
     <select id="speedSelect" class="speed-select" title="Speed preset">
       <option value="fast">⚡ Fast</option>
@@ -126,7 +123,7 @@
       </button>
       <input id="fileInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.json,.csv,.tsv,.xml,.yaml,.yml,.toml,.js,.ts,.py,.go,.rs,.java,.cs,.rb,.php,.html,.css,.scss,.sql,.log,.env,.sh" hidden />
       <div id="slashPop" class="slash-pop hidden"></div>
-      <textarea id="input" placeholder="Message MoonBridge..." rows="1"></textarea>
+      <textarea id="input" placeholder="Tell the agent what to do..." rows="1"></textarea>
       <button id="sendBtn" class="send-btn" title="Send (Enter)">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
       </button>
