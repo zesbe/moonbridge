@@ -1396,7 +1396,10 @@ function startNewBatch() {
     sep.dataset.iter = String((parseInt(_currentBatch.dataset.iter || '0', 10) + 1));
     _currentBatch.dataset.iter = sep.dataset.iter;
     const body = _currentBatch.querySelector('.batch-body');
-    if (body) body.appendChild(sep);
+    if (body) {
+      body.appendChild(sep);
+      scrollBatchBodyToBottom(body);
+    }
   }
 }
 
@@ -1460,12 +1463,31 @@ function createActivityItem(toolName) {
   item.appendChild(icon);
   item.appendChild(content);
   item.appendChild(detail);
-  batch.querySelector('.batch-body').appendChild(item);
+  const body = batch.querySelector('.batch-body');
+  body.appendChild(item);
 
   batchUpdateProgress(batch);
   scrollToBottom();
+  // Auto-scroll the batch body to bottom so the latest streaming task is
+  // always visible — fixes "task ke-9 ga keliatan karena ke-cap max-height".
+  // Smooth-scroll behavior on .batch-body handles the animation.
+  scrollBatchBodyToBottom(body);
 
   return { item, batch, summary, meta, detail, _name: toolName, _started: Date.now() };
+}
+
+// Scroll batch body to bottom so streaming new items keep latest in view.
+// Wrapped in rAF so it runs after layout — addresses item not being in
+// the rect yet when scroll fires synchronously.
+function scrollBatchBodyToBottom(body) {
+  if (!body) return;
+  requestAnimationFrame(() => {
+    try {
+      // Scroll to bottom with smooth behavior — CSS scroll-behavior:smooth
+      // is already set on .batch-body, this just kicks the layout.
+      body.scrollTop = body.scrollHeight;
+    } catch {}
+  });
 }
 
 function setActivityInput(card, input) {
