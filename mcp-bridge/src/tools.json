@@ -1,0 +1,1607 @@
+[
+  {
+    "name": "get_page",
+    "description": "Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "max_chars": {
+          "type": "integer",
+          "description": "Max chars of text (default 4000)."
+        },
+        "tab_id": {
+          "type": "integer",
+          "description": "Optional tab id. Default = active tab."
+        },
+        "full": {
+          "type": "boolean",
+          "description": "Include all elements, not just visible (default false)."
+        }
+      }
+    }
+  },
+  {
+    "name": "read_tab",
+    "description": "Like get_page but for a SPECIFIC tab without switching to it. Use to compare multiple tabs.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tab_id"
+      ]
+    }
+  },
+  {
+    "name": "find_element",
+    "description": "Search for elements matching a query (text, aria-label, placeholder). Returns matching #ref-N selectors. Useful when get_page truncates the list.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Substring to match (case-insensitive)."
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results (default 20)."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "extract_links",
+    "description": "Extract all links from a tab as a structured list (text, href). Use for crawling/list extraction.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "contains": {
+          "type": "string",
+          "description": "Filter: substring in URL or text."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 50."
+        }
+      }
+    }
+  },
+  {
+    "name": "get_console",
+    "description": "Read recent JS console messages from a tab. Useful for debugging.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 30."
+        }
+      }
+    }
+  },
+  {
+    "name": "click",
+    "description": "Click an element. Provide CSS selector or #ref-N from get_page.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ],
+          "description": "Default left."
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "hover",
+    "description": "Hover over an element (triggers menus, tooltips). Useful for UI that reveals on hover.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "type",
+    "description": "Type text into an input/textarea/contenteditable. Optionally press Enter after.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "press_enter": {
+          "type": "boolean"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Clear existing value first (default true)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "key_press",
+    "description": "Send a keyboard shortcut to an element or the page. Examples: \"Enter\", \"Escape\", \"Tab\", \"Control+a\", \"Control+c\", \"Meta+v\", \"ArrowDown\".",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "string",
+          "description": "Key combo. Use + to combine modifiers."
+        },
+        "selector": {
+          "type": "string",
+          "description": "Optional element to focus first."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys"
+      ]
+    }
+  },
+  {
+    "name": "select_option",
+    "description": "Select an option in a <select> dropdown by value or visible text.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string",
+          "description": "Match by option value or innerText."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "fill_form",
+    "description": "Fill multiple form fields at once. Faster than calling type() N times. Each field: {selector, value, type?:\"text\"|\"check\"|\"radio\"|\"select\"}",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "selector": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "check",
+                  "radio",
+                  "select"
+                ]
+              }
+            },
+            "required": [
+              "selector",
+              "value"
+            ]
+          }
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "submit": {
+          "type": "boolean",
+          "description": "Submit the form after filling (default false)."
+        }
+      },
+      "required": [
+        "fields"
+      ]
+    }
+  },
+  {
+    "name": "scroll",
+    "description": "Scroll the page or a specific element.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "direction": {
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "top",
+            "bottom",
+            "into_view"
+          ]
+        },
+        "amount": {
+          "type": "integer",
+          "description": "Pixels for up/down (default 600)."
+        },
+        "selector": {
+          "type": "string",
+          "description": "Required for \"into_view\". Optional otherwise — scrolls inside element."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "direction"
+      ]
+    }
+  },
+  {
+    "name": "wait_for",
+    "description": "Wait until a CSS selector appears (or element's text matches) — up to 10s. Use after click that triggers async load instead of fixed wait().",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "text_contains": {
+          "type": "string",
+          "description": "Optional: also require this text inside the element."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max 10000."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "wait",
+    "description": "Sleep N milliseconds (max 5000). Prefer wait_for when checking for content.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "ms": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "navigate",
+    "description": "Navigate a tab to a URL. Waits for page load.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "back",
+    "description": "Go back in tab history.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "forward",
+    "description": "Go forward in tab history.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "reload",
+    "description": "Reload a tab. Optional bypass_cache: true for a hard refresh.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "bypass_cache": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "screenshot",
+    "description": "PNG screenshot of the visible viewport. Use when DOM is insufficient (visual layout, images, canvas).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "execute_js",
+    "description": "Run arbitrary JavaScript in the page context and return the result. Use for complex queries DOM tools cannot express. The code is wrapped in an async function — use return to get the value back.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "JS body. Use return to send a value back. Must be JSON-serializable."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    }
+  },
+  {
+    "name": "list_tabs",
+    "description": "List all open tabs in the current window with id, url, title, active flag, audible flag.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "all_windows": {
+          "type": "boolean",
+          "description": "Include tabs from all windows (default false)."
+        }
+      }
+    }
+  },
+  {
+    "name": "switch_tab",
+    "description": "Activate a tab by id (focus its window too).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tab_id"
+      ]
+    }
+  },
+  {
+    "name": "new_tab",
+    "description": "Open a new tab. The new tab becomes active. Returns its id.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "background": {
+          "type": "boolean",
+          "description": "Open in background (do not activate, default false)."
+        }
+      }
+    }
+  },
+  {
+    "name": "close_tab",
+    "description": "Close a tab. Without tab_id closes the active tab.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "duplicate_tab",
+    "description": "Duplicate a tab.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "click_and_read",
+    "description": "COMBO: Click an element, wait for the page to settle, then read the new state. Faster than calling click + wait + get_page separately. Use this when you click something and need to see what changed.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "wait_ms": {
+          "type": "integer",
+          "description": "Settle time before reading (default 800)."
+        },
+        "max_chars": {
+          "type": "integer"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "navigate_and_read",
+    "description": "COMBO: Navigate to a URL and immediately return its content. Faster than navigate + get_page.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "max_chars": {
+          "type": "integer"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "network_log",
+    "description": "Capture recent network requests (fetch / XHR) made by the page. Returns method, URL, status, response size, duration. Use to inspect API calls a webapp makes — useful for scraping hidden APIs or debugging.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max entries (default 30, max 100)."
+        },
+        "filter": {
+          "type": "string",
+          "description": "Optional substring filter on URL."
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "If true, clear the buffer after returning. Default false."
+        }
+      }
+    }
+  },
+  {
+    "name": "network_response",
+    "description": "Get the full response body of a recent network request, identified by index from network_log. Useful when network_log shows interesting URL and you want the data.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "index": {
+          "type": "integer",
+          "description": "Index from network_log (0-based)."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate body (default 8000)."
+        }
+      },
+      "required": [
+        "index"
+      ]
+    }
+  },
+  {
+    "name": "screenshot_compare",
+    "description": "Take a screenshot now and compare with one taken earlier (by snapshot_id from screenshot_snapshot). Returns diff percentage, region of changes, and a side-by-side annotated image. Useful for visual regression / verifying UI changes.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "snapshot_id": {
+          "type": "string",
+          "description": "ID returned by screenshot_snapshot."
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Pixel similarity threshold 0-1, default 0.05."
+        }
+      },
+      "required": [
+        "snapshot_id"
+      ]
+    }
+  },
+  {
+    "name": "screenshot_snapshot",
+    "description": "Take a baseline screenshot and store it in memory under a snapshot_id (returned). Use later with screenshot_compare to detect changes.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional human-readable label."
+        }
+      }
+    }
+  },
+  {
+    "name": "list_windows",
+    "description": "List all Chrome windows with their id, focused state, type, and number of tabs.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "new_window",
+    "description": "Open a new Chrome window. Optionally with a starting URL and as popup/normal type.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "popup"
+          ],
+          "description": "Default normal."
+        },
+        "focused": {
+          "type": "boolean",
+          "description": "Default true."
+        }
+      }
+    }
+  },
+  {
+    "name": "focus_window",
+    "description": "Bring a window to the front by id.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "window_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window_id"
+      ]
+    }
+  },
+  {
+    "name": "close_window",
+    "description": "Close a window and all its tabs.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "window_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window_id"
+      ]
+    }
+  },
+  {
+    "name": "move_tab",
+    "description": "Move a tab to a different window or position. Useful for organizing tabs across windows.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "window_id": {
+          "type": "integer",
+          "description": "Target window. Omit to keep in current window."
+        },
+        "index": {
+          "type": "integer",
+          "description": "Position in target window. -1 = end. Default -1."
+        }
+      },
+      "required": [
+        "tab_id"
+      ]
+    }
+  },
+  {
+    "name": "batch",
+    "description": "Run a sequence of tool calls in one round-trip. Each step is {tool, input}. Stops on first error unless continue_on_error=true. Massively reduces latency for repeated patterns (e.g. fill 19 fields).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        "continue_on_error": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
+    "name": "page_summary",
+    "description": "Compact version of get_page: only landmarks (headings, main inputs, primary buttons, navigation), much smaller than full text. Use to quickly orient on a page.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 1500."
+        }
+      }
+    }
+  },
+  {
+    "name": "scroll_until",
+    "description": "Scroll the page until an element matching selector OR a piece of text is visible. Auto-stops at end of page. Use for infinite-scroll lists or finding off-screen items.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector to wait for."
+        },
+        "text": {
+          "type": "string",
+          "description": "Text to find on page (alternative to selector)."
+        },
+        "max_scrolls": {
+          "type": "integer",
+          "description": "Cap iterations (default 20)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "dom_snapshot",
+    "description": "Return a compact JSON tree of the visible DOM (tag + key attributes only, no styling/text). Better than get_page text when you need structural reasoning. Limited to N nodes.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Default 200."
+        },
+        "root_selector": {
+          "type": "string",
+          "description": "Optional: snapshot a subtree."
+        }
+      }
+    }
+  },
+  {
+    "name": "get_value",
+    "description": "Get the value of an input/textarea/select. Direct access without parsing get_page text.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "get_attribute",
+    "description": "Get a specific attribute of an element (href, data-*, aria-*, etc).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "attribute": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector",
+        "attribute"
+      ]
+    }
+  },
+  {
+    "name": "get_text",
+    "description": "Get the inner text of an element. Useful for reading values, status, etc without get_page.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "read_storage",
+    "description": "Read localStorage and/or sessionStorage of a tab. Returns key/value pairs. Useful for debugging webapps.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local",
+            "session",
+            "both"
+          ],
+          "description": "Default both."
+        }
+      }
+    }
+  },
+  {
+    "name": "write_storage",
+    "description": "Write a key to localStorage or sessionStorage.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local",
+            "session"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "key",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "read_cookies",
+    "description": "Read cookies for the current tab's domain (or a given URL). Returns name/value/domain/path/secure flags.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL whose cookies to fetch (default = current tab URL)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "clipboard_read",
+    "description": "Read text from the system clipboard.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "clipboard_write",
+    "description": "Write text to the system clipboard.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "element_screenshot",
+    "description": "Capture a screenshot cropped to a specific element. Useful for verifying UI components without the full viewport.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "scratchpad_set",
+    "description": "Save a string under a key in the per-session scratchpad. Use to remember values across tool calls (e.g. extracted IDs, intermediate state).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "scratchpad_get",
+    "description": "Read a value from the scratchpad.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "scratchpad_list",
+    "description": "List all scratchpad keys with previews.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "note_save",
+    "description": "Save a note (text) to persistent storage that survives sessions. Different from scratchpad which is in-memory only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "note_get",
+    "description": "Read a persistent note by key.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "note_list",
+    "description": "List all persistent notes (key + size + age).",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "note_delete",
+    "description": "Delete a persistent note.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "get_page_diff",
+    "description": "Take a get_page snapshot and compare with the previous snapshot of the same tab. Returns what text/elements were added/removed/changed. Useful for tracking page evolution after actions.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "list_frames",
+    "description": "List all iframes in a tab with id, url, name. Use frame_id to scope subsequent tool calls (get_page, click, etc) to a specific iframe.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "find_by_text",
+    "description": "Scan visible elements for one matching the given text. Returns CSS selector, XPath, and #ref-N for stable interaction. Better than guessing #ref from get_page.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to find (case-insensitive substring)."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Optional tag filter: button, a, input, etc."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "drag_drop",
+    "description": "Drag an element to another. Fires HTML5 drag events (dragstart, dragenter, dragover, drop, dragend). Use for reordering lists, file upload zones (programmatic), kanban boards.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "from_selector": {
+          "type": "string"
+        },
+        "to_selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_selector",
+        "to_selector"
+      ]
+    }
+  },
+  {
+    "name": "mouse_drag",
+    "description": "Drag from one point to another using mouse events (mousedown→mousemove→mouseup). Lower-level than drag_drop. Use for canvas, drawing apps, sliders.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "from_x": {
+          "type": "integer"
+        },
+        "from_y": {
+          "type": "integer"
+        },
+        "to_x": {
+          "type": "integer"
+        },
+        "to_y": {
+          "type": "integer"
+        },
+        "steps": {
+          "type": "integer",
+          "description": "Intermediate mousemove count (default 10)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_x",
+        "from_y",
+        "to_x",
+        "to_y"
+      ]
+    }
+  },
+  {
+    "name": "double_click",
+    "description": "Fire dblclick on an element. Faster than batch.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "triple_click",
+    "description": "Click 3x rapidly to select line/paragraph.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "get_page_text",
+    "description": "Pure article-style text extraction without element list. Smaller output than get_page. Best for reading long content.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 8000."
+        }
+      }
+    }
+  },
+  {
+    "name": "scroll_to",
+    "description": "Scroll to a specific X,Y coordinate, or to top/bottom. Use for precise positioning when scroll/scroll_until are not enough.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "top",
+            "bottom"
+          ],
+          "description": "Quick shortcut."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "set_zoom",
+    "description": "Set zoom level for a tab. 1.0 = 100%. Range 0.25 to 5.0.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "zoom": {
+          "type": "number"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "zoom"
+      ]
+    }
+  },
+  {
+    "name": "get_zoom",
+    "description": "Get current zoom level of a tab.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "resize_window",
+    "description": "Change browser window dimensions. Useful for testing responsive layouts. Provide width+height OR state (maximized/minimized/normal/fullscreen).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "window_id": {
+          "type": "integer",
+          "description": "Default = current window."
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "minimized",
+            "maximized",
+            "fullscreen"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "upload_image",
+    "description": "Upload an image to an input[type=file] or drop target. Fetches the image from a URL (or base64) and programmatically attaches it via DataTransfer.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector for input[type=file] or drop target."
+        },
+        "url": {
+          "type": "string",
+          "description": "Image URL. Required if base64 not provided."
+        },
+        "base64": {
+          "type": "string",
+          "description": "Base64-encoded image (without data: prefix). Alternative to url."
+        },
+        "filename": {
+          "type": "string",
+          "description": "Default \"image.png\"."
+        },
+        "mime": {
+          "type": "string",
+          "description": "Default \"image/png\"."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "update_plan",
+    "description": "Show a structured plan to the user and ask for approval before continuing. Steps array each has {title, status?, note?}. Returns user's decision (approved/rejected/edited).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Plan title."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "done",
+                  "skipped"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ]
+          }
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    }
+  },
+  {
+    "name": "gif_capture",
+    "description": "Capture N screenshot frames at an interval and download as a GIF-style sequence (saved as a folder of PNGs since GIF encoder is heavy). Use for recording browser activity.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "frames": {
+          "type": "integer",
+          "description": "Number of frames (max 30, default 10)."
+        },
+        "interval_ms": {
+          "type": "integer",
+          "description": "Time between frames (default 500)."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "web_search",
+    "description": "Search the web and return top results (title, url, snippet). Use this BEFORE navigating — saves turns. Faster than opening Google in a tab.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results (default 8, max 15)."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "youtube_transcript",
+    "description": "Fetch the auto-generated transcript of a YouTube video. Provide a YouTube URL or video id. Useful for summarizing videos without watching them.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "YouTube URL or video id."
+        },
+        "lang": {
+          "type": "string",
+          "description": "ISO language code (default \"en\")."
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "read_pdf",
+    "description": "Fetch a PDF from a URL and extract its text content. Best-effort, works for most non-scanned PDFs.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 20000."
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "fetch_url",
+    "description": "Fetch any URL and return its text content (HTML stripped to readable text). Use for raw content access without opening a tab. JSON URLs are returned formatted.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 12000."
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "download_file",
+    "description": "Download a file from a URL to the user's Downloads folder. Returns the saved filename.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Optional filename suggestion."
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "save_text",
+    "description": "Save arbitrary text content to a file in the user's Downloads folder.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "filename",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "wait_for_idle",
+    "description": "Wait until network activity stops (no requests for 500ms). Use after click/navigate that triggers async content load. Better than fixed wait().",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max wait, default 8000."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "remember",
+    "description": "Store a persistent fact about the user that you should recall in future conversations (preferences, projects, names, context). Use sparingly for important things only.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "fact": {
+          "type": "string",
+          "description": "A concise statement, e.g. \"User prefers Indonesian\" or \"User's project is X\"."
+        },
+        "category": {
+          "type": "string",
+          "description": "Optional: profile, preference, project, etc."
+        }
+      },
+      "required": [
+        "fact"
+      ]
+    }
+  },
+  {
+    "name": "forget",
+    "description": "Remove a previously stored memory by its id (shown in recall results).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "recall_memories",
+    "description": "List all stored memories. Memories are also auto-injected into the system prompt, so you typically don't need to call this — it's for managing them.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "search_kb",
+    "description": "Search the user's knowledge base (files they uploaded as persistent context). Returns matching file excerpts.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 5."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "list_kb",
+    "description": "List files in the user's knowledge base.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

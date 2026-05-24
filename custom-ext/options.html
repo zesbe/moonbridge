@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MoonBridge — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Settings</h1>
+    <p class="subtitle">Configure your Anthropic-compatible endpoint.</p>
+
+    <section class="card">
+      <label>
+        <span class="label">Base URL</span>
+        <input type="text" id="baseUrl" placeholder="https://your-endpoint.com/v1" />
+        <small>Must end at /v1 (the path segment before /messages).</small>
+      </label>
+
+      <label>
+        <span class="label">API Token</span>
+        <div class="token-row">
+          <input type="password" id="apiToken" placeholder="sk-..." autocomplete="off" />
+          <button type="button" id="toggleToken" class="ghost">Show</button>
+        </div>
+        <small>Sent as both <code>Authorization: Bearer</code> and <code>x-api-key</code>.</small>
+      </label>
+
+      <label>
+        <span class="label">Default Model</span>
+        <div class="token-row">
+          <input type="text" id="defaultModel" placeholder="kr/claude-sonnet-4.5" />
+          <button type="button" id="loadModelsBtn" class="ghost">Load list</button>
+        </div>
+        <select id="modelList" class="hidden" size="8"></select>
+      </label>
+
+      <label>
+        <span class="label">System Prompt (optional)</span>
+        <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant..."></textarea>
+      </label>
+
+      <div class="row">
+        <label class="half">
+          <span class="label">Temperature</span>
+          <input type="number" id="temperature" min="0" max="2" step="0.1" />
+        </label>
+        <label class="half">
+          <span class="label">Max Tokens</span>
+          <input type="number" id="maxTokens" min="1" max="200000" step="1" />
+        </label>
+      </div>
+
+      <label>
+        <span class="label">Cache TTL</span>
+        <select id="cacheTtl">
+          <option value="5m">5 minutes (cheaper writes, default)</option>
+          <option value="1h">1 hour (better for long sessions)</option>
+        </select>
+        <small>Prompt cache duration. 1h costs 2x to write but saves more on long agent sessions.</small>
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" id="pinSidepanelToTab" />
+        <span>Pin sidepanel to current tab</span>
+        <small>When ON, opening a new tab won't bring the sidepanel along. Click the MoonBridge icon to open it on a specific tab. Default: ON (matches Claude Chrome behavior).</small>
+      </label>
+
+      <div class="actions">
+        <button type="button" id="testBtn" class="secondary">Test connection</button>
+        <button type="button" id="saveBtn" class="primary">Save</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="card small">
+      <h2>Tips</h2>
+      <ul>
+        <li>Press <kbd>Ctrl</kbd>+<kbd>E</kbd> to toggle the side panel.</li>
+        <li>The side panel sends conversation history each turn (stateless).</li>
+        <li>Click the model dropdown to switch model mid-conversation.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

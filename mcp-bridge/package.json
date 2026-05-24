@@ -1,0 +1,27 @@
+{
+  "name": "moonbridge-bridge",
+  "version": "1.0.0",
+  "description": "MCP bridge that connects Claude Code CLI to the MoonBridge Chrome extension",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "moonbridge-bridge": "bin/moonbridge-bridge.js"
+  },
+  "scripts": {
+    "start": "node bin/moonbridge-bridge.js"
+  },
+  "keywords": ["mcp", "claude-code", "browser-automation", "moonbridge"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ]
+}
