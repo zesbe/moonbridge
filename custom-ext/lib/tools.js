@@ -72,7 +72,7 @@ export const ALL_TOOLS = [
   // ===== Interaction =====
   {
     name: 'click',
-    description: 'Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets.',
+    description: 'Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets. Set wait_navigation=true to auto-wait for SPA / full nav settle after click (saves a roundtrip vs separate wait_for_navigation call).',
     input_schema: {
       type: 'object',
       properties: {
@@ -80,6 +80,7 @@ export const ALL_TOOLS = [
         tab_id: { type: 'integer' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Default left.' },
         timeout_ms: { type: 'integer', description: 'Max wait for element to appear (default 600).' },
+        wait_navigation: { type: 'boolean', description: 'Wait for tab to complete + SPA settle if URL changes after click (default false).' },
       },
       required: ['selector'],
     },
@@ -954,14 +955,27 @@ export const ALL_TOOLS = [
   // ===== File system actions =====
   {
     name: 'download_file',
-    description: 'Download a file from a URL to the user\'s Downloads folder. Returns the saved filename.',
+    description: 'Download a file from a URL to the user\'s Downloads folder. By default WAITS up to timeout_ms for completion and returns final state. Set wait=false to fire-and-forget.',
     input_schema: {
       type: 'object',
       properties: {
         url: { type: 'string' },
         filename: { type: 'string', description: 'Optional filename suggestion.' },
+        wait: { type: 'boolean', description: 'Wait until download terminal state (default true).' },
+        timeout_ms: { type: 'integer', description: 'Max wait time in ms (default 8000).' },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'download_status',
+    description: 'Check status of a download by id. Returns {state: in_progress|complete|interrupted, filename, bytes_received, total_bytes, error}.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: 'Download id returned from download_file.' },
+      },
+      required: ['id'],
     },
   },
   {
@@ -2195,6 +2209,7 @@ export async function executeTool(name, input, ctx = {}) {
       case 'read_pdf':       return wrap(await tool_readPdf(input || {}));
       case 'fetch_url':      return wrap(await tool_fetchUrl(input || {}));
       case 'download_file':  return wrap(await tool_downloadFile(input || {}));
+      case 'download_status': return wrap(await tool_downloadStatus(input || {}));
       case 'save_text':      return wrap(await tool_saveText(input || {}));
       case 'wait_for_idle':  return wrap(await tool_waitForIdle(input || {}));
       case 'remember':       return wrap(await tool_remember(input || {}, ctx));
@@ -2618,9 +2633,11 @@ function getConsoleInPage(limit) {
 // INTERACTION TOOLS
 // =====================================================================
 
-async function tool_click({ selector, tab_id, button = 'left', timeout_ms = 600 }) {
+async function tool_click({ selector, tab_id, button = 'left', timeout_ms = 600, wait_navigation = false }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  // Capture URL before click so we can detect SPA route change after
+  const beforeUrl = tab.url;
   // Auto-retry: try selector now, then poll up to timeout_ms if not found yet
   let center = await chrome.tabs.sendMessage(tab.id, { type: 'CC_HIGHLIGHT', selector }).catch(() => null);
   let result = null;
@@ -2645,8 +2662,23 @@ async function tool_click({ selector, tab_id, button = 'left', timeout_ms = 600 
   }
   await new Promise((r) => setTimeout(r, 350));
   await waitForTabComplete(tab.id, 5000);
+  // SPA / full-nav settle if requested. Detect URL change → run spaSettle.
+  let settledNote = '';
+  if (wait_navigation) {
+    try {
+      const after = await chrome.tabs.get(tab.id);
+      if (after.url && after.url !== beforeUrl) {
+        await spaSettle(tab.id, after.url).catch(() => {});
+        settledNote = ' (settled)';
+      } else {
+        // No URL change but caller asked to wait — give the SPA a beat anyway
+        await new Promise((r) => setTimeout(r, 400));
+        settledNote = ' (no nav)';
+      }
+    } catch {}
+  }
   const newTab = await chrome.tabs.get(tab.id);
-  return { content: `Clicked ${result.label || selector}. URL: ${newTab.url}` };
+  return { content: `Clicked ${result.label || selector}. URL: ${newTab.url}${settledNote}` };
 }
 
 function clickInPage(selector, button) {
@@ -3178,21 +3210,23 @@ async function tool_executeJs({ code, tab_id }) {
   if (!code) return { is_error: true, content: 'code is required.' };
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
-  // First try isolated world
+  // First try isolated world (own JS sandbox, immune to page CSP for `new Function`)
   let result;
   try {
     result = await execIsolated(tab.id, executeJsInPage, [code]);
   } catch (e) {
     result = { error: e.message };
   }
-  // If isolated world failed (often happens with `new Function` blocked by sandbox),
-  // try MAIN world via scripting.executeScript.
+  // If isolated world failed, try MAIN world via scripting.executeScript.
+  // MAIN world IS subject to page Trusted Types policy though, so this can
+  // fail on YouTube/Google with "require-trusted-types-for 'script'".
+  // The MAIN-world helper now installs a TT policy first to handle that.
   if (result?.error) {
     try {
       const [{ result: r2 }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: 'MAIN',
-        func: executeJsInPage,
+        func: executeJsInMainWorld,
         args: [code],
       });
       result = r2;
@@ -3200,8 +3234,9 @@ async function tool_executeJs({ code, tab_id }) {
       result = { error: 'isolated+main both failed: ' + e.message };
     }
   }
-  // Final fallback: chrome.debugger / CDP (bypasses CSP) — opt-in due to debug bar
-  if (result?.error && /csp|content security policy|unsafe-eval|sandbox/i.test(result.error)) {
+  // Final fallback: chrome.debugger / CDP (bypasses CSP + Trusted Types)
+  // Triggered by any of: CSP, unsafe-eval, sandbox, "Trusted Type" assignment errors.
+  if (result?.error && /csp|content security policy|unsafe-eval|sandbox|trusted type|trustedtypes/i.test(result.error)) {
     try {
       result = await executeJsViaCdp(tab.id, code);
     } catch (e) {
@@ -3236,8 +3271,44 @@ async function executeJsViaCdp(tabId, code) {
   }
 }
 
+// Isolated-world variant — runs in extension's own JS world, bypasses page CSP/TT.
 function executeJsInPage(code) {
   try {
+    const fn = new Function(`return (async () => { ${code} })();`);
+    return fn().then((v) => ({ value: v })).catch((e) => ({ error: e.message }));
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+// MAIN-world variant — runs in the page's JS world, IS subject to page CSP /
+// Trusted Types. We register a permissive TT policy first so `new Function`
+// is allowed. If TT is enforced and policy can't be created, the error message
+// will mention "Trusted Type" which triggers the CDP fallback upstream.
+function executeJsInMainWorld(code) {
+  try {
+    // Some pages enforce trustedTypes.createPolicy("policyName") restrictions
+    // via require-trusted-types-for + trusted-types <names> CSP. If our
+    // policy name isn't in the allow-list, createPolicy throws — we catch
+    // and let the error propagate so CDP fallback handles it.
+    if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+      // Use a stable name so we don't leak duplicate policies on repeated runs.
+      const POLICY_NAME = 'mb-eval';
+      try {
+        // If already registered (re-run), getPolicy isn't standard but
+        // createPolicy throws for duplicates → we just ignore.
+        if (!window.__mbTTPolicy__) {
+          window.__mbTTPolicy__ = trustedTypes.createPolicy(POLICY_NAME, {
+            createScript: (s) => s,
+            createScriptURL: (s) => s,
+            createHTML: (s) => s,
+          });
+        }
+      } catch (e) {
+        // Duplicate policy or CSP doesn't allow this name — proceed anyway,
+        // some pages still let `new Function` through if no enforcement.
+      }
+    }
     const fn = new Function(`return (async () => { ${code} })();`);
     return fn().then((v) => ({ value: v })).catch((e) => ({ error: e.message }));
   } catch (e) {
@@ -3550,16 +3621,82 @@ async function tool_fetchUrl({ url, max_chars = 12000, use_cookies = false, tab_
 // DOWNLOAD / SAVE
 // =====================================================================
 
-async function tool_downloadFile({ url, filename }) {
+async function tool_downloadFile({ url, filename, wait = true, timeout_ms = 8000 }) {
   if (!url) return { is_error: true, content: 'url is required.' };
+  let id;
   try {
     const opts = { url };
     if (filename) opts.filename = filename;
-    const id = await chrome.downloads.download(opts);
-    return { content: `Started download (id=${id}).${filename ? ' Filename: ' + filename : ''}` };
+    id = await chrome.downloads.download(opts);
   } catch (e) {
     return { is_error: true, content: `Download failed: ${e.message}` };
   }
+  if (!wait) {
+    return { content: `Started download (id=${id}).${filename ? ' Filename: ' + filename : ''} Use download_status(${id}) to check.` };
+  }
+  // Auto-poll until terminal state or timeout
+  const result = await waitForDownload(id, timeout_ms);
+  if (result.error) return { is_error: true, error_code: ERR_CODES.EXEC_FAILED,
+                              content: `Download id=${id} failed: ${result.error}` };
+  if (result.state === 'complete') {
+    return { content: `Downloaded id=${id}: ${result.filename} (${result.bytes} bytes).` };
+  }
+  return { content: `Started download (id=${id}, state=${result.state}). Still in progress after ${timeout_ms}ms — call download_status(${id}) later.` };
+}
+
+async function tool_downloadStatus({ id }) {
+  if (id == null) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'id is required.' };
+  try {
+    const items = await chrome.downloads.search({ id });
+    if (!items?.length) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `No download with id=${id}.` };
+    const d = items[0];
+    const out = {
+      id: d.id,
+      state: d.state, // 'in_progress' | 'complete' | 'interrupted'
+      filename: d.filename,
+      url: d.finalUrl || d.url,
+      mime: d.mime,
+      total_bytes: d.totalBytes,
+      bytes_received: d.bytesReceived,
+      paused: !!d.paused,
+      error: d.error || null,        // e.g. "NETWORK_FAILED", "FILE_NO_SPACE"
+      start_time: d.startTime,
+      end_time: d.endTime || null,
+    };
+    return { content: JSON.stringify(out, null, 2) };
+  } catch (e) {
+    return { is_error: true, content: `download_status failed: ${e.message}` };
+  }
+}
+
+// Wait for a download to reach terminal state (complete | interrupted) or timeout.
+function waitForDownload(id, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (val) => { if (done) return; done = true; chrome.downloads.onChanged.removeListener(listener); resolve(val); };
+    const listener = (delta) => {
+      if (delta.id !== id) return;
+      if (delta.state?.current === 'complete') {
+        chrome.downloads.search({ id }).then((items) => {
+          const d = items?.[0] || {};
+          finish({ state: 'complete', filename: d.filename, bytes: d.bytesReceived });
+        });
+      } else if (delta.state?.current === 'interrupted') {
+        chrome.downloads.search({ id }).then((items) => {
+          const d = items?.[0] || {};
+          finish({ state: 'interrupted', error: d.error || 'interrupted' });
+        });
+      }
+    };
+    chrome.downloads.onChanged.addListener(listener);
+    // In case the download already completed before listener attached:
+    chrome.downloads.search({ id }).then((items) => {
+      const d = items?.[0];
+      if (d?.state === 'complete') finish({ state: 'complete', filename: d.filename, bytes: d.bytesReceived });
+      else if (d?.state === 'interrupted') finish({ state: 'interrupted', error: d.error || 'interrupted' });
+    });
+    setTimeout(() => finish({ state: 'in_progress' }), timeoutMs);
+  });
 }
 
 async function tool_saveText({ filename, content }) {

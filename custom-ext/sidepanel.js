@@ -1093,6 +1093,7 @@ const ACTION_VERBS = {
   update_plan: 'Update plan', gif_capture: 'Capture frames',
   list_chat_attachments: 'List attachments', get_chat_attachment: 'Read attachment',
   upload_image: 'Upload file',
+  download_status: 'Download status',
 };
 
 const ACTION_ICONS = {
@@ -1134,6 +1135,7 @@ const ACTION_ICONS = {
   update_plan: '📋', gif_capture: '🎬',
   list_chat_attachments: '📎', get_chat_attachment: '📎',
   upload_image: '⬆️',
+  download_status: '⬇',
 };
 
 // Tool → category, for premium batch titles ("Searching web", "Reading page" …)
@@ -1171,7 +1173,7 @@ const TOOL_CATEGORY = {
   ai_summarize: 'ai', ai_describe_page: 'ai', ai_extract_data: 'ai',
   // network / fetch
   network_log: 'network', network_response: 'network', fetch_url: 'network',
-  download_file: 'network',
+  download_file: 'network', download_status: 'network',
   // storage / db
   read_storage: 'storage', write_storage: 'storage', read_cookies: 'storage',
   db_set: 'storage', db_get: 'storage', db_query: 'storage', db_delete: 'storage',

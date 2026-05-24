@@ -110,7 +110,7 @@
   },
   {
     "name": "click",
-    "description": "Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets.",
+    "description": "Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets. Set wait_navigation=true to auto-wait for SPA / full nav settle after click (saves a roundtrip vs separate wait_for_navigation call).",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -132,6 +132,10 @@
         "timeout_ms": {
           "type": "integer",
           "description": "Max wait for element to appear (default 600)."
+        },
+        "wait_navigation": {
+          "type": "boolean",
+          "description": "Wait for tab to complete + SPA settle if URL changes after click (default false)."
         }
       },
       "required": [
@@ -1572,7 +1576,7 @@
   },
   {
     "name": "download_file",
-    "description": "Download a file from a URL to the user's Downloads folder. Returns the saved filename.",
+    "description": "Download a file from a URL to the user's Downloads folder. By default WAITS up to timeout_ms for completion and returns final state. Set wait=false to fire-and-forget.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1582,10 +1586,34 @@
         "filename": {
           "type": "string",
           "description": "Optional filename suggestion."
+        },
+        "wait": {
+          "type": "boolean",
+          "description": "Wait until download terminal state (default true)."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max wait time in ms (default 8000)."
         }
       },
       "required": [
         "url"
+      ]
+    }
+  },
+  {
+    "name": "download_status",
+    "description": "Check status of a download by id. Returns {state: in_progress|complete|interrupted, filename, bytes_received, total_bytes, error}.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Download id returned from download_file."
+        }
+      },
+      "required": [
+        "id"
       ]
     }
   },
