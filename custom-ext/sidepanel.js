@@ -622,7 +622,8 @@ function appendUserMessage(text, persist = true, attachments = null, msgIdx = nu
   actions.appendChild(edit);
   div.appendChild(actions);
   messagesEl.appendChild(div);
-  scrollToBottom();
+  // Force scroll: user just sent this, always show it
+  forceScrollToBottom();
 }
 
 function makeAction(emoji, label, handler) {
