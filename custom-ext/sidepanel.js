@@ -1561,7 +1561,25 @@ function setActivityResult(card, content, isError, dataUrl) {
   s.querySelector('pre').textContent = textOut.slice(0, 4000);
 
   if (dataUrl) {
-    // Thumbnail in batch head
+    // INLINE preview — render the screenshot directly under the row so
+    // user sees it without needing to expand the detail panel.
+    // (Was hidden in .action-detail before — user feedback: "ga keliatan di chat")
+    let inline = card.item.querySelector('.action-inline-preview');
+    if (!inline) {
+      inline = document.createElement('div');
+      inline.className = 'action-inline-preview';
+      const ipImg = document.createElement('img');
+      ipImg.className = 'action-inline-preview-img';
+      ipImg.alt = 'screenshot';
+      ipImg.loading = 'lazy';
+      ipImg.addEventListener('click', () => showImageZoom(dataUrl));
+      inline.appendChild(ipImg);
+      // Insert AFTER the action-content so the row layout still works
+      card.item.appendChild(inline);
+    }
+    inline.querySelector('img').src = dataUrl;
+
+    // Thumbnail in batch head (legacy, smaller — still useful for collapsed batches)
     if (!card.batch.querySelector('.batch-thumb')) {
       const thumb = document.createElement('img');
       thumb.className = 'batch-thumb';
@@ -1573,7 +1591,7 @@ function setActivityResult(card, content, isError, dataUrl) {
       const head = card.batch.querySelector('.batch-head');
       head.insertBefore(thumb, head.querySelector('.batch-chevron'));
     }
-    // Full image in detail
+    // Full image in detail (kept as backup; user can still click row to expand)
     let img = card.detail.querySelector('.action-detail-screenshot');
     if (!img) {
       img = document.createElement('img');

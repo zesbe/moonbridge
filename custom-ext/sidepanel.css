@@ -1725,6 +1725,7 @@ body {
 /* Action item — premium inline row */
 .activity-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 11px;
   padding: 8px 0;
@@ -2023,6 +2024,56 @@ body {
   cursor: zoom-in;
   transition: all var(--transition);
   opacity: 0.92;
+}
+
+/* Inline screenshot preview — shown directly in the activity row so user
+   can see the captured image without expanding the detail panel.
+   Sits below the icon+content flex row via flex-basis: 100% break. */
+.action-inline-preview {
+  flex-basis: 100%;
+  margin-left: 33px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  animation: inline-preview-in 360ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
+}
+@keyframes inline-preview-in {
+  0%   { opacity: 0; transform: translateY(-6px) scale(0.97); max-height: 0; }
+  100% { opacity: 1; transform: translateY(0) scale(1); max-height: 400px; }
+}
+.action-inline-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  width: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(217, 119, 87, 0.18);
+  cursor: zoom-in;
+  background: rgba(0, 0, 0, 0.30);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 4px 16px rgba(0, 0, 0, 0.30),
+    0 0 0 4px rgba(217, 119, 87, 0.06);
+  transition: all 240ms var(--ease);
+  opacity: 0.95;
+}
+.action-inline-preview-img:hover {
+  transform: scale(1.012);
+  border-color: var(--accent);
+  opacity: 1;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 26px rgba(0, 0, 0, 0.42),
+    0 0 0 5px rgba(217, 119, 87, 0.12);
+}
+@media (prefers-color-scheme: light) {
+  .action-inline-preview-img {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(217, 119, 87, 0.20);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.6) inset,
+      0 4px 16px rgba(0, 0, 0, 0.10),
+      0 0 0 4px rgba(217, 119, 87, 0.06);
+  }
 }
 .action-detail-screenshot:hover {
   transform: scale(1.005);
