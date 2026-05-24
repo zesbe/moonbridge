@@ -1333,22 +1333,39 @@ function batchUpdateProgress(batch) {
 
 function finalizeBatch() {
   if (_currentBatch) {
-    _currentBatch.classList.remove('running', 'pending');
-    if (_currentBatch.dataset.failed && parseInt(_currentBatch.dataset.failed) > 0) {
-      _currentBatch.classList.add('failed');
+    const b = _currentBatch;
+    b.classList.remove('running', 'pending');
+    if (b.dataset.failed && parseInt(b.dataset.failed) > 0) {
+      b.classList.add('failed');
     } else {
-      _currentBatch.classList.add('completed');
+      b.classList.add('completed');
+      // Auto-compact successful batches after a short read window so the
+      // long expanded timeline collapses into a single ✓ summary row.
+      // Failed batches stay expanded for inspection.
+      setTimeout(() => {
+        if (b.isConnected && !b.classList.contains('failed')) {
+          b.classList.add('auto-compact');
+          b.classList.add('collapsed');
+        }
+      }, 1400);
     }
-    _currentBatch.dataset.completed = '1';
+    b.dataset.completed = '1';
   }
   _currentBatch = null;
 }
 
 function startNewBatch() {
   if (_currentBatch) {
-    _currentBatch.classList.remove('running', 'pending');
-    _currentBatch.classList.add('completed');
-    _currentBatch.dataset.completed = '1';
+    const b = _currentBatch;
+    b.classList.remove('running', 'pending');
+    b.classList.add('completed');
+    b.dataset.completed = '1';
+    // Previous batch — collapse immediately so the new one doesn't push
+    // a wall of completed-step rows down the chat.
+    if (!b.classList.contains('failed')) {
+      b.classList.add('auto-compact');
+      b.classList.add('collapsed');
+    }
   }
   _currentBatch = null;
 }
@@ -1844,10 +1861,17 @@ async function runAgentTurn(continuingExisting = false) {
       const captured = lastTextBufRef.value;
       attachAssistantActions(assistantUI.wrap, () => captured);
     }
-    // Mark ticker as done — fades to a subtle "✓ Done" line that can collapse on next turn
+    // Mark ticker as done — auto-fade and remove from DOM so it doesn't
+    // leave a permanent ghost row taking vertical space after completion.
     if (thinkStream) {
       setTickerLine(thinkStream, 'Done', 'idle');
       thinkStream.wrap.classList.add('done');
+      const tickerEl = thinkStream.wrap;
+      setTimeout(() => {
+        if (!tickerEl.isConnected) return;
+        tickerEl.classList.add('fading-out');
+        setTimeout(() => { try { tickerEl.remove(); } catch {} }, 320);
+      }, 1200);
     }
   } catch (e) {
     appendError(`Unexpected: ${e.message}`);

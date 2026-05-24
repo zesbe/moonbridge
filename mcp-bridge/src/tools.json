@@ -1,7 +1,7 @@
 [
   {
     "name": "get_page",
-    "description": "Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements.",
+    "description": "Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus=\"main\" trims sidebar/recommendation noise on YouTube/Twitter/GitHub.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -16,6 +16,17 @@
         "full": {
           "type": "boolean",
           "description": "Include all elements, not just visible (default false)."
+        },
+        "focus": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "main",
+            "main-content",
+            "focused",
+            "full-page"
+          ],
+          "description": "auto (default) — main-content for SPAs, full-page elsewhere. main / main-content / focused — primary content only (drops sidebar). full-page — entire body."
         }
       }
     }
@@ -496,7 +507,7 @@
   },
   {
     "name": "click_and_read",
-    "description": "COMBO: Click an element, wait for the page to settle, then read the new state. Faster than calling click + wait + get_page separately. Use this when you click something and need to see what changed.",
+    "description": "COMBO: Click an element, wait for the page to settle, then read the new state. Faster than calling click + wait + get_page separately. Auto-detects SPA navigation (YouTube/Twitter/etc) and waits for primary content to mount. Use this when you click something and need to see what changed.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -512,6 +523,17 @@
         },
         "tab_id": {
           "type": "integer"
+        },
+        "focus": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "main",
+            "main-content",
+            "focused",
+            "full-page"
+          ],
+          "description": "Forwarded to get_page. Default auto."
         }
       },
       "required": [
@@ -521,7 +543,7 @@
   },
   {
     "name": "navigate_and_read",
-    "description": "COMBO: Navigate to a URL and immediately return its content. Faster than navigate + get_page.",
+    "description": "COMBO: Navigate to a URL and immediately return its content. Faster than navigate + get_page. Auto SPA settle for known sites.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -533,6 +555,17 @@
         },
         "tab_id": {
           "type": "integer"
+        },
+        "focus": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "main",
+            "main-content",
+            "focused",
+            "full-page"
+          ],
+          "description": "Forwarded to get_page. Default auto."
         }
       },
       "required": [

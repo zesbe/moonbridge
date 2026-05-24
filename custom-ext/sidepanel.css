@@ -879,6 +879,22 @@ body {
   color: rgba(74, 222, 128, 0.7);
   animation: none;
 }
+.ticker.fading-out {
+  opacity: 0;
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    opacity 240ms var(--ease),
+    max-height 280ms var(--ease),
+    margin 280ms var(--ease),
+    padding 280ms var(--ease);
+}
 @keyframes ticker-spin {
   0%   { transform: rotate(0deg); opacity: 0.6; }
   50%  { opacity: 1; }
@@ -1228,9 +1244,42 @@ body {
   }
 }
 
-.activity-batch.collapsed .batch-body { display: none; }
-.activity-batch.completed { opacity: 0.72; }
+.activity-batch.collapsed .batch-body {
+  /* True collapse — animate height + opacity so layout reclaims the space.
+     `display: none` would also work but skips the transition; keeping the
+     element in the tree with max-height: 0 + opacity 0 lets it animate. */
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  overflow: hidden;
+  transition:
+    max-height 220ms var(--ease),
+    opacity 180ms var(--ease),
+    padding 220ms var(--ease);
+}
+.activity-batch.collapsed .batch-body::before { display: none; }
+.activity-batch.completed { opacity: 0.78; }
 .activity-batch.completed:hover { opacity: 1; }
+/* Auto-compact a completed batch a moment after finishing so the long
+   timeline shrinks to a single ✓ summary row without leaving blank space. */
+.activity-batch.completed.auto-compact { opacity: 0.85; }
+.activity-batch.completed.auto-compact .batch-body {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    max-height 280ms var(--ease),
+    opacity 220ms var(--ease),
+    padding 280ms var(--ease);
+}
+.activity-batch.completed.auto-compact .batch-chevron { transform: rotate(0deg); opacity: 0.55; }
+.activity-batch.completed:hover.auto-compact { opacity: 1; }
 .activity-batch.failed { border-color: rgba(231, 76, 60, 0.28); }
 .activity-batch.failed::before {
   content: '';

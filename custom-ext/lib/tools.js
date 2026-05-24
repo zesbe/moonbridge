@@ -8,13 +8,15 @@ export const ALL_TOOLS = [
   // ===== Reading =====
   {
     name: 'get_page',
-    description: 'Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements.',
+    description: 'Read a tab: URL, title, visible text, and clickable elements with #ref-N selectors. Use FIRST to understand a page. Set full=true to also include hidden/structural elements. focus="main" trims sidebar/recommendation noise on YouTube/Twitter/GitHub.',
     input_schema: {
       type: 'object',
       properties: {
         max_chars: { type: 'integer', description: 'Max chars of text (default 4000).' },
         tab_id: { type: 'integer', description: 'Optional tab id. Default = active tab.' },
         full: { type: 'boolean', description: 'Include all elements, not just visible (default false).' },
+        focus: { type: 'string', enum: ['auto', 'main', 'main-content', 'focused', 'full-page'],
+                 description: 'auto (default) — main-content for SPAs, full-page elsewhere. main / main-content / focused — primary content only (drops sidebar). full-page — entire body.' },
       },
     },
   },
@@ -302,7 +304,7 @@ export const ALL_TOOLS = [
   // ===== Combo tools (save turns) =====
   {
     name: 'click_and_read',
-    description: 'COMBO: Click an element, wait for the page to settle, then read the new state. Faster than calling click + wait + get_page separately. Use this when you click something and need to see what changed.',
+    description: 'COMBO: Click an element, wait for the page to settle, then read the new state. Faster than calling click + wait + get_page separately. Auto-detects SPA navigation (YouTube/Twitter/etc) and waits for primary content to mount. Use this when you click something and need to see what changed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -310,19 +312,23 @@ export const ALL_TOOLS = [
         wait_ms: { type: 'integer', description: 'Settle time before reading (default 800).' },
         max_chars: { type: 'integer' },
         tab_id: { type: 'integer' },
+        focus: { type: 'string', enum: ['auto', 'main', 'main-content', 'focused', 'full-page'],
+                 description: 'Forwarded to get_page. Default auto.' },
       },
       required: ['selector'],
     },
   },
   {
     name: 'navigate_and_read',
-    description: 'COMBO: Navigate to a URL and immediately return its content. Faster than navigate + get_page.',
+    description: 'COMBO: Navigate to a URL and immediately return its content. Faster than navigate + get_page. Auto SPA settle for known sites.',
     input_schema: {
       type: 'object',
       properties: {
         url: { type: 'string' },
         max_chars: { type: 'integer' },
         tab_id: { type: 'integer' },
+        focus: { type: 'string', enum: ['auto', 'main', 'main-content', 'focused', 'full-page'],
+                 description: 'Forwarded to get_page. Default auto.' },
       },
       required: ['url'],
     },
@@ -2224,7 +2230,7 @@ async function needsApproval(name, input, ctx) {
 // READING TOOLS
 // =====================================================================
 
-async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_shadow = true }) {
+async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_shadow = true, focus = 'auto' }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) {
     return { is_error: true, error_code: ERR_CODES.RESTRICTED,
@@ -2233,13 +2239,14 @@ async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_sh
                       `Try a normal http(s) page instead.` };
   }
   await indicator(tab.id, { type: 'CC_TOAST', text: `Reading ${tab_id ? 'tab ' + tab_id : 'page'}…` });
-  const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow]);
+  const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow, focus]);
   if (!snap) return { content: 'No snapshot returned.' };
   const lines = [];
   lines.push(`URL: ${snap.url}`);
   lines.push(`TITLE: ${snap.title}`);
   lines.push(`TAB: id=${tab.id}${tab.active ? ' (active)' : ''}`);
   lines.push(`SCROLL: y=${snap.scrollY}/${snap.scrollHeight} (viewport=${snap.viewportH})`);
+  if (snap.focus_used) lines.push(`FOCUS: ${snap.focus_used}${snap.focus_selector ? ' (' + snap.focus_selector + ')' : ''}`);
 
   // Explicit truncation flag — addresses AI feedback "agent kadang tidak sadar isinya terpotong"
   if (snap.text_truncated) {
@@ -2247,7 +2254,10 @@ async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_sh
                `Re-call with max_chars=${Math.min(snap.total_chars, 20000)} to see more.`);
   }
   if (snap.elements_truncated) {
-    lines.push(`⚠ ELEMENTS TRUNCATED: showing 50 of ${snap.total_elements}. Use find_element to search the rest.`);
+    lines.push(`⚠ ELEMENTS TRUNCATED: showing ${snap.elements?.length || 0} of ${snap.total_elements}. Use find_element to search the rest.`);
+  }
+  if (snap.elements_deduped) {
+    lines.push(`ℹ DEDUPED: removed ${snap.elements_deduped} duplicate / repeated sibling element(s).`);
   }
   if (snap.shadow_roots_found) {
     lines.push(`📦 Shadow DOM: traversed ${snap.shadow_roots_found} shadow root(s).`);
@@ -2262,19 +2272,72 @@ async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_sh
     lines.push('(use #ref-N as selector for click/type)');
     for (const el of snap.elements) {
       const shadowMark = el.in_shadow ? ' 🟣' : '';
-      lines.push(`#ref-${el.ref}  [${el.tag}${el.type ? '/' + el.type : ''}]${shadowMark}  ${el.label}`);
+      const groupMark = el.group_count > 1 ? `  ×${el.group_count}` : '';
+      lines.push(`#ref-${el.ref}  [${el.tag}${el.type ? '/' + el.type : ''}]${shadowMark}  ${el.label}${groupMark}`);
     }
   }
   return { content: lines.join('\n') };
 }
 
-function pageSnapshotInPage(maxChars, full, includeShadow) {
+function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
   const url = location.href, title = document.title;
   const scrollY = window.scrollY;
   const scrollHeight = document.documentElement.scrollHeight;
   const viewportH = window.innerHeight;
 
   let shadowRootsFound = 0;
+
+  // ---------- Focus detection ----------
+  // Some sites (YouTube, Twitter, GitHub) have huge sidebars/recommendation
+  // rails that drown out the main content the user actually navigated to.
+  // Pick a focused root that emphasizes primary content over chrome.
+  let focusRoot = document.body;
+  let focusUsed = 'full-page';
+  let focusSelector = '';
+  function pickFocus(mode) {
+    if (mode === 'full-page') return { root: document.body, label: 'full-page', selector: '' };
+    const SITE_PRIMARY = {
+      'youtube.com': ['ytd-watch-flexy #primary', '#primary.ytd-watch-flexy', 'ytd-watch-flexy', 'ytd-browse', '#contents'],
+      'twitter.com': ['main [data-testid="primaryColumn"]', 'main'],
+      'x.com': ['main [data-testid="primaryColumn"]', 'main'],
+      'github.com': ['main', '#repo-content-pjax-container', '.repository-content'],
+      'reddit.com': ['main', 'shreddit-app main'],
+      'linkedin.com': ['main'],
+    };
+    const host = location.hostname.replace(/^www\./, '');
+    for (const [pattern, sels] of Object.entries(SITE_PRIMARY)) {
+      if (host.endsWith(pattern)) {
+        for (const s of sels) {
+          try {
+            const el = document.querySelector(s);
+            if (el && el.offsetHeight > 100) return { root: el, label: 'site-main', selector: s };
+          } catch {}
+        }
+      }
+    }
+    // Generic: <main> if substantial, otherwise [role=main], article, #main, #content
+    const generic = ['main', '[role="main"]', 'article', '#main', '#content', '.main-content', '#primary'];
+    for (const s of generic) {
+      try {
+        const el = document.querySelector(s);
+        if (el && el.offsetHeight > 100) return { root: el, label: 'main', selector: s };
+      } catch {}
+    }
+    return { root: document.body, label: 'full-page', selector: '' };
+  }
+  if (focus === 'main' || focus === 'main-content' || focus === 'focused') {
+    const f = pickFocus('main');
+    focusRoot = f.root; focusUsed = f.label; focusSelector = f.selector;
+  } else if (focus === 'auto') {
+    // Auto: prefer main-content for known SPA sites, otherwise full-page
+    const SPA_HOSTS = /(youtube|twitter|x|reddit|github|linkedin|instagram|tiktok)\.com$/;
+    if (SPA_HOSTS.test(location.hostname.replace(/^www\./, ''))) {
+      const f = pickFocus('main');
+      if (f.label !== 'full-page') {
+        focusRoot = f.root; focusUsed = f.label + ' (auto)'; focusSelector = f.selector;
+      }
+    }
+  }
 
   // Recursively walk the DOM, descending into open shadow roots.
   // Closed shadow roots are inaccessible by spec — nothing we can do there.
@@ -2297,7 +2360,7 @@ function pageSnapshotInPage(maxChars, full, includeShadow) {
   }
 
   function getVisibleText() {
-    const body = document.body;
+    const body = focusRoot;
     if (!body) return { text: '', total: 0, truncated: false };
     // First, count total available text (without truncation) by walking all nodes
     let totalChars = 0;
@@ -2373,25 +2436,58 @@ function pageSnapshotInPage(maxChars, full, includeShadow) {
     return false;
   };
 
-  const elements = [];
   const allCandidates = [];
-  // Walk light DOM + (optionally) shadow DOM
-  for (const node of walkAll(document.body)) {
+  // Walk light DOM (within focus root) + (optionally) shadow DOM
+  for (const node of walkAll(focusRoot)) {
     if (isInteractive(node)) {
       allCandidates.push({ el: node, in_shadow: !!node.getRootNode().host });
     }
   }
 
-  let ref = 0;
-  window.__claudeRefs__ = window.__claudeRefs__ || {};
+  // ---------- Dedup + group ----------
+  // Remove icon-only / aria-only noise and collapse repeated siblings.
+  // Two elements are "duplicates" if they share (label, tag, type) AND are
+  // in the same parent (or grandparent at most) — that's how YouTube cards
+  // produce 5–10x repeats per row.
+  const groupMap = new Map();   // key → first index
+  const filtered = [];
+  let dropped = 0;
   for (const c of allCandidates) {
     const el = c.el;
-    if (!full && !isVisible(el)) continue;
-    ref++;
-    window.__claudeRefs__[ref] = el;
+    if (!full && !isVisible(el)) { dropped++; continue; }
     const tag = el.tagName.toLowerCase();
     const type = el.getAttribute('type') || el.getAttribute('role') || '';
-    elements.push({ ref, tag, type, label: labelFor(el), in_shadow: c.in_shadow });
+    const lbl = labelFor(el);
+    // Drop empty/icon-only buttons that have no aria-label / text → useless to model
+    if (!lbl) { dropped++; continue; }
+    // Group key: (label, tag, type, parent.tagName) — siblings of same kind dedupe
+    const parent = el.parentElement;
+    const key = `${tag}|${type}|${lbl}|${parent?.tagName || ''}`;
+    if (groupMap.has(key)) {
+      const idx = groupMap.get(key);
+      filtered[idx]._group_count++;
+      // Keep ref of FIRST occurrence — drop later duplicates entirely
+      dropped++;
+      continue;
+    }
+    groupMap.set(key, filtered.length);
+    filtered.push({ ...c, _tag: tag, _type: type, _label: lbl, _group_count: 1 });
+  }
+
+  const elements = [];
+  let ref = 0;
+  window.__claudeRefs__ = window.__claudeRefs__ || {};
+  for (const c of filtered) {
+    ref++;
+    window.__claudeRefs__[ref] = c.el;
+    elements.push({
+      ref,
+      tag: c._tag,
+      type: c._type,
+      label: c._label,
+      in_shadow: c.in_shadow,
+      group_count: c._group_count,
+    });
     if (elements.length >= 50) break;
   }
 
@@ -2404,8 +2500,11 @@ function pageSnapshotInPage(maxChars, full, includeShadow) {
     text_truncated: t.truncated,
     elements,
     total_elements: allCandidates.length,
-    elements_truncated: allCandidates.length > 50,
+    elements_truncated: filtered.length > 50,
+    elements_deduped: dropped,
     shadow_roots_found: shadowRootsFound,
+    focus_used: focusUsed,
+    focus_selector: focusSelector,
   };
 }
 
@@ -2744,6 +2843,89 @@ function fillFormInPage(fields, submit) {
     if (m && window.__claudeRefs__) { const el = window.__claudeRefs__[parseInt(m[1], 10)]; if (el?.isConnected) return el; }
     try { return document.querySelector(sel); } catch { return null; }
   }
+  // Find the actual clickable surface for a hidden checkbox/radio.
+  // Custom UI (Tailwind, Radix, MUI, shadcn, demoqa, etc) hides the real
+  // <input> with display:none/opacity:0 and binds events to a <label> or
+  // sibling <span>/<div> wrapper. Plain `input.checked = true` updates DOM
+  // state but never fires the framework listeners on the visible surface.
+  function findClickableSurface(input) {
+    if (!input) return null;
+    // 1) Explicit <label for="id">
+    if (input.id) {
+      try {
+        const lab = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        if (lab) return lab;
+      } catch {}
+    }
+    // 2) Wrapping label
+    const wrappingLabel = input.closest('label');
+    if (wrappingLabel) return wrappingLabel;
+    // 3) ARIA / role wrapper (Radix, custom switches)
+    let p = input.parentElement;
+    for (let depth = 0; p && depth < 4; depth++, p = p.parentElement) {
+      const role = p.getAttribute('role');
+      if (role === 'checkbox' || role === 'radio' || role === 'switch') return p;
+      if (p.hasAttribute('data-state') || p.hasAttribute('aria-checked')) return p;
+    }
+    // 4) Visible sibling/wrapper
+    p = input.parentElement;
+    if (p && getComputedStyle(input).display === 'none') {
+      // Pick first visible child of the parent that's not the input itself.
+      for (const child of p.children) {
+        if (child === input) continue;
+        const cs = getComputedStyle(child);
+        if (cs.display !== 'none' && cs.visibility !== 'hidden') return child;
+      }
+      return p;
+    }
+    return input;
+  }
+
+  // Dispatch the full pointer/click sequence so all framework listeners fire.
+  function fireClickSequence(target) {
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    const x = r.left + Math.max(2, r.width / 2);
+    const y = r.top + Math.max(2, r.height / 2);
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 };
+    try { target.dispatchEvent(new PointerEvent('pointerdown', { ...opts, pointerType: 'mouse', isPrimary: true })); } catch {}
+    try { target.dispatchEvent(new MouseEvent('mousedown', opts)); } catch {}
+    try { target.dispatchEvent(new PointerEvent('pointerup',   { ...opts, pointerType: 'mouse', isPrimary: true })); } catch {}
+    try { target.dispatchEvent(new MouseEvent('mouseup',   opts)); } catch {}
+    try { target.click(); } catch {
+      try { target.dispatchEvent(new MouseEvent('click', opts)); } catch {}
+    }
+  }
+
+  function setRadioOrCheck(input, kind, desiredChecked) {
+    const surface = findClickableSurface(input);
+    const beforeChecked = !!input.checked;
+    // Direct toggling only works for native checkboxes — for hidden inputs
+    // it bypasses framework state. Always prefer click on the surface.
+    if (surface !== input || (input.tagName !== 'INPUT')) {
+      if (kind === 'radio' || (kind === 'check' && desiredChecked !== beforeChecked)) {
+        fireClickSequence(surface);
+      } else {
+        // Already in desired state — no-op
+      }
+    } else {
+      // Native input visible — flip + fire events
+      if (kind === 'radio') {
+        input.checked = true;
+      } else {
+        input.checked = desiredChecked;
+      }
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    // Verify after a microtask gap (frameworks often re-render synchronously
+    // off the click event)
+    const final = !!input.checked
+      || input.getAttribute('aria-checked') === 'true'
+      || (input.parentElement && input.parentElement.getAttribute('data-state') === 'checked');
+    return { ok: kind === 'radio' ? final : final === !!desiredChecked, before: beforeChecked, after: final };
+  }
+
   let filled = 0;
   const errors = [];
   let lastEl = null;
@@ -2754,12 +2936,19 @@ function fillFormInPage(fields, submit) {
     el.scrollIntoView({ block: 'center' });
     const t = (f.type || '').toLowerCase();
     try {
-      if (t === 'check') {
-        el.checked = !!f.value && f.value !== 'false';
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (t === 'check' || t === 'checkbox') {
+        const desired = !!f.value && f.value !== 'false' && f.value !== 'no' && f.value !== '0';
+        const r = setRadioOrCheck(el, 'check', desired);
+        if (!r.ok) {
+          errors.push(`${f.selector}: checkbox not toggled (before=${r.before}, after=${r.after})`);
+          continue;
+        }
       } else if (t === 'radio') {
-        el.checked = true;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        const r = setRadioOrCheck(el, 'radio', true);
+        if (!r.ok) {
+          errors.push(`${f.selector}: radio not selected (after=${r.after})`);
+          continue;
+        }
       } else if (t === 'select' || el.tagName === 'SELECT') {
         let chosen = null;
         for (const opt of el.options) if (opt.value === f.value || opt.textContent.trim() === f.value) { chosen = opt; break; }
@@ -2900,8 +3089,50 @@ async function tool_navigate({ url, tab_id }) {
   await chrome.tabs.update(tab.id, { url });
   await waitForTabComplete(tab.id, 20000);
   await new Promise((r) => setTimeout(r, 400));
+  // SPA settle — for known SPAs the URL changes well before main content mounts
+  await spaSettle(tab.id, url).catch(() => {});
   const updated = await chrome.tabs.get(tab.id);
   return { content: `Navigated to ${updated.url}. Title: ${updated.title || '(loading)'}` };
+}
+
+// SPA-aware settle: wait for main content to mount + DOM to stabilize.
+// Most SPAs (YouTube, Twitter, Reddit, etc) route synchronously but render
+// asynchronously, so a plain "tab complete" event fires before the page
+// the user actually sees. We poll for a specific primary-content selector
+// per host, then verify two consecutive DOM-size samples match.
+async function spaSettle(tabId, url) {
+  const SETTLE_RULES = [
+    { test: /youtube\.com\/watch/, selectors: ['ytd-watch-flexy:not([hidden]) #title', '#movie_player video', 'h1.ytd-watch-metadata'], timeout: 4500 },
+    { test: /youtube\.com\/(results|@|c\/|channel\/)/, selectors: ['ytd-search', 'ytd-section-list-renderer', '#contents ytd-video-renderer, #contents ytd-channel-renderer'], timeout: 3500 },
+    { test: /(twitter|x)\.com/, selectors: ['main [data-testid="primaryColumn"] article', 'main [role="region"]'], timeout: 3500 },
+    { test: /reddit\.com/, selectors: ['shreddit-app main', '[slot="post-container"]', 'main'], timeout: 3500 },
+    { test: /github\.com/, selectors: ['main', '#repo-content-pjax-container'], timeout: 2500 },
+    { test: /linkedin\.com/, selectors: ['main'], timeout: 2500 },
+  ];
+  let rule = null;
+  for (const r of SETTLE_RULES) if (r.test.test(url)) { rule = r; break; }
+  if (!rule) return;
+  // Poll for one of the selectors to appear
+  const deadline = Date.now() + rule.timeout;
+  while (Date.now() < deadline) {
+    const r = await execIsolated(tabId, (sels) => {
+      for (const s of sels) {
+        try {
+          const el = document.querySelector(s);
+          if (el && el.getBoundingClientRect().height > 30) return { found: true, html_size: document.documentElement.outerHTML.length };
+        } catch {}
+      }
+      return { found: false };
+    }, [rule.selectors]).catch(() => null);
+    if (r?.found) {
+      // Verify DOM stability — two consecutive identical sizes
+      const size1 = r.html_size;
+      await new Promise((res) => setTimeout(res, 250));
+      const r2 = await execIsolated(tabId, () => document.documentElement.outerHTML.length).catch(() => null);
+      if (r2 && Math.abs(r2 - size1) < size1 * 0.05) return; // <5% delta = stable
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
 }
 
 async function tool_back({ tab_id }) {
@@ -3083,18 +3314,28 @@ async function tool_duplicateTab({ tab_id }) {
 
 // ===== Combo tools =====
 
-async function tool_clickAndRead({ selector, wait_ms = 800, max_chars = 2500, tab_id }) {
+async function tool_clickAndRead({ selector, wait_ms = 800, max_chars = 2500, tab_id, focus = 'auto' }) {
   const r1 = await tool_click({ selector, tab_id });
   if (r1.is_error) return r1;
+  // SPA click might trigger client-side route change without a full nav.
+  // Wait the requested ms, then settle if URL changed (typical YouTube card click).
+  const tab = await resolveTab(tab_id);
+  const before = tab.url;
   await new Promise((res) => setTimeout(res, Math.min(3000, Math.max(0, wait_ms))));
-  const r2 = await tool_getPage({ max_chars, tab_id });
+  try {
+    const after = await chrome.tabs.get(tab.id);
+    if (after.url && after.url !== before) {
+      await spaSettle(tab.id, after.url).catch(() => {});
+    }
+  } catch {}
+  const r2 = await tool_getPage({ max_chars, tab_id, focus });
   return { content: `${r1.content}\n\n${r2.content}` };
 }
 
-async function tool_navigateAndRead({ url, max_chars = 2500, tab_id }) {
+async function tool_navigateAndRead({ url, max_chars = 2500, tab_id, focus = 'auto' }) {
   const r1 = await tool_navigate({ url, tab_id });
   if (r1.is_error) return r1;
-  const r2 = await tool_getPage({ max_chars, tab_id });
+  const r2 = await tool_getPage({ max_chars, tab_id, focus });
   return { content: `${r1.content}\n\n${r2.content}` };
 }
 
