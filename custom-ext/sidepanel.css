@@ -1420,6 +1420,26 @@ body {
    On next turn → previous summaries shrink to ".mini" chips.
    ===================================================================== */
 
+/* Belt-and-suspenders: any non-mini batch must always be visible.
+   Defends against stale .collapsed / .auto-compact / .shrinking classes
+   from leaking onto fresh turn-2 batches. */
+.activity-batch.running,
+.activity-batch.pending {
+  opacity: 1 !important;
+  max-height: none !important;
+  min-height: auto !important;
+  transform: none !important;
+  pointer-events: auto !important;
+}
+.activity-batch.running .batch-body,
+.activity-batch.pending .batch-body {
+  opacity: 1 !important;
+  max-height: 360px !important;
+  padding-top: 4px !important;
+  padding-bottom: 11px !important;
+  border-top-width: 1px !important;
+}
+
 /* Iteration separator — small horizontal line in the body where one
    tool-use iteration ended and the next began. */
 .iter-separator {

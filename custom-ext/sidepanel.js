@@ -1244,6 +1244,11 @@ function ensureBatchForCurrentTurn() {
   if (_currentBatch && _currentBatch.isConnected && !_currentBatch.dataset.turnEnded) {
     return _currentBatch;
   }
+  // If _currentBatch points to something stale (orphaned, turnEnded, or
+  // detached), null it out before creating fresh.
+  if (_currentBatch && (!_currentBatch.isConnected || _currentBatch.dataset.turnEnded)) {
+    _currentBatch = null;
+  }
   ensureNoEmpty();
 
   const wrap = document.createElement('div');
@@ -1853,6 +1858,16 @@ async function runAgentTurn(continuingExisting = false) {
   abortCtrl = new AbortController();
   setStreaming(true);
   await indicatorBroadcast({ type: 'CC_SHOW' });
+
+  // DEFENSIVE: force fresh batch state at start of every turn.
+  // Without this, a stale _currentBatch reference (e.g. from a prior turn
+  // where finalizeBatch didn't fully reset) made ensureBatchForCurrentTurn
+  // reuse the old DOM node — so the second turn appeared to have NO new
+  // timeline batch at all.
+  _currentBatch = null;
+  // Also belt-and-suspenders compact any leftover completed batches that
+  // might still be at full size (race with the 3s grace timer).
+  compactPreviousTurns();
 
   // Start trace
   const lastUser = [...conversation].reverse().find((m) => m.role === 'user');
