@@ -103,3 +103,65 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } catch {}
   await scheduledAdapter.setLastRun(task.id, { triggered: true });
 });
+
+// =====================================================================
+// Dev hot-reload (no-op in production)
+// Connects to scripts/dev-watch.js via WebSocket on :9012 and triggers
+// chrome.runtime.reload() on file change. Gated by version_name dev marker
+// — production builds don't include "dev" so this is dead code there.
+// =====================================================================
+(function setupHotReload() {
+  try {
+    const m = chrome.runtime.getManifest();
+    const isDev = !!m.version_name && /dev/i.test(m.version_name);
+    if (!isDev) return;
+    let ws = null;
+    let backoff = 1000;
+    const connect = () => {
+      try {
+        ws = new WebSocket('ws://localhost:9012');
+      } catch (e) {
+        scheduleReconnect();
+        return;
+      }
+      ws.onopen = () => {
+        backoff = 1000;
+        console.log('[dev-reload] connected');
+      };
+      ws.onmessage = (ev) => {
+        let data = ev.data;
+        try { data = JSON.parse(data); } catch {}
+        if (data === 'reload' || data?.type === 'reload') {
+          console.log('[dev-reload] reloading…', data?.reason || '');
+          chrome.runtime.reload();
+        }
+      };
+      ws.onclose = scheduleReconnect;
+      ws.onerror = () => { try { ws?.close(); } catch {} };
+    };
+    const scheduleReconnect = () => {
+      const wait = Math.min(15000, backoff);
+      backoff = Math.min(15000, backoff * 1.5);
+      setTimeout(connect, wait);
+    };
+    connect();
+  } catch (e) {
+    // never break SW boot in prod
+  }
+})();
+
+// =====================================================================
+// SW keep-alive — chrome.alarms ticks at 25s intervals to keep the
+// service worker from hibernating during long-running tools (monitor_url,
+// download polling, etc). Cheap alarms have ~zero cost vs the alternative
+// of every long tool dying mid-flight.
+// Reference: https://developer.chrome.com/docs/extensions/reference/api/alarms
+// =====================================================================
+const KEEPALIVE_NAME = 'mb-keepalive';
+chrome.alarms.create(KEEPALIVE_NAME, { periodInMinutes: 0.42 }); // ≈25s
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === KEEPALIVE_NAME) {
+    // Just touch storage — that's the cheapest thing that proves the SW is alive
+    try { chrome.storage.session.set({ _mb_alive: Date.now() }); } catch {}
+  }
+});

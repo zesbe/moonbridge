@@ -1,3 +1,4 @@
+// @ts-check
 // File handling: read user-picked files into attachment objects.
 // Supported types:
 //   - image/* (PNG, JPEG, GIF, WEBP)  → vision content block

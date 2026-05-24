@@ -13,6 +13,7 @@ import {
   logger, debounce, rafThrottle, jsonSize, fmtBytes,
   sanitizeChat, sanitizeConversation,
   safeStorageSet, reportStorageUsage, pruneOldBlobs,
+  traceDump, traceClear,
 } from './lib/storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -237,6 +238,8 @@ async function _saveCurrentChatNow() {
   // Cap saved chats hard.
   if (savedChats.length > MAX_SAVED_CHATS) savedChats = savedChats.slice(0, MAX_SAVED_CHATS);
   await persistChats();
+  // 5.1 — remember last chat for session restore on panel reopen
+  try { await chrome.storage.session.set({ lastChatId: currentChatId }); } catch {}
   if (!historyPanel.classList.contains('hidden')) renderHistory();
 }
 
@@ -1901,6 +1904,17 @@ async function sendAgent(userText, userContent, attachments = []) {
 async function send() {
   const text = inputEl.value.trim();
   if (!text && pendingAttachments.length === 0) return;
+
+  // 5.3 — slash commands intercepted client-side, never sent to model
+  if (text.startsWith('/')) {
+    const handled = await handleSlashCommand(text);
+    if (handled) {
+      inputEl.value = '';
+      autoResize();
+      return;
+    }
+  }
+
   if (!settings.apiToken) {
     appendError('No API token configured. Open Settings (⋯ → Settings) first.');
     return;
@@ -1917,6 +1931,64 @@ async function send() {
 
   if (mode === 'agent') await sendAgent(text, userContent, attachments);
   else await sendChat(text, userContent);
+}
+
+// Slash commands run locally — no model roundtrip, no token spend.
+// Returns true if the command was handled (caller clears input).
+async function handleSlashCommand(text) {
+  const [cmdRaw, ...rest] = text.slice(1).split(/\s+/);
+  const cmd = (cmdRaw || '').toLowerCase();
+  const arg = rest.join(' ');
+  switch (cmd) {
+    case 'dump-trace':
+    case 'trace': {
+      const limit = parseInt(arg, 10) || 100;
+      const entries = await traceDump(limit);
+      if (!entries.length) {
+        setHint('No tracelog entries yet.');
+        return true;
+      }
+      const dump = entries.map((e) => {
+        const t = new Date(e.ts).toISOString();
+        const inp = typeof e.input === 'string' ? e.input : JSON.stringify(e.input);
+        const out = typeof e.output === 'string' ? e.output : JSON.stringify(e.output);
+        return `[${t}] ${e.tool} (${e.durationMs}ms)${e.error ? ' ERROR' : ''}\n  in:  ${inp}\n  out: ${(out || '').slice(0, 300)}${e.error ? '\n  err: ' + e.error : ''}`;
+      }).join('\n\n');
+      try {
+        await navigator.clipboard.writeText(dump);
+        setHint(`Copied ${entries.length} trace entries to clipboard.`);
+      } catch {
+        appendError('Could not copy to clipboard. Open DevTools console to read trace.');
+        logger.info('TRACE DUMP:\n' + dump);
+      }
+      return true;
+    }
+    case 'clear-trace': {
+      await traceClear();
+      setHint('Tracelog cleared.');
+      return true;
+    }
+    case 'storage': {
+      const usage = await reportStorageUsage();
+      if (usage) setHint(`storage: ${fmtBytes(usage.used)} / ${fmtBytes(usage.quota)} (${usage.pct}%)`);
+      return true;
+    }
+    case 'debug-on': {
+      logger.setDebug(true);
+      setHint('Debug logging enabled.');
+      return true;
+    }
+    case 'debug-off': {
+      logger.setDebug(false);
+      setHint('Debug logging disabled.');
+      return true;
+    }
+    case 'help': {
+      setHint('Commands: /dump-trace [N] · /clear-trace · /storage · /debug-on · /debug-off');
+      return true;
+    }
+  }
+  return false; // not a known slash command — let it through to the model
 }
 
 function stopStreaming() { abortCtrl?.abort(); }
@@ -2579,7 +2651,25 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   } else if (speedPreset === 'manual') {
     speedSelect.value = 'manual';
   }
-  renderEmptyState();
+  // Restore last active chat (5.1 sidepanel state persistence) — chrome.storage.session
+  // is auto-cleared on browser close, so this only persists across panel close/reopen
+  // within a single browser session.
+  try {
+    const { lastChatId } = await chrome.storage.session.get(['lastChatId']);
+    if (lastChatId) {
+      const chat = savedChats.find((c) => c.id === lastChatId);
+      if (chat) {
+        loadChat(chat);
+        logger.debug(`restored last chat ${lastChatId}`);
+      } else {
+        renderEmptyState();
+      }
+    } else {
+      renderEmptyState();
+    }
+  } catch {
+    renderEmptyState();
+  }
   inputEl.focus();
   // Pick up scheduled task if pending
   await runPendingScheduledIfAny();

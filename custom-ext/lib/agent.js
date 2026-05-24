@@ -16,6 +16,7 @@ import { ALL_TOOLS, executeTool } from './tools.js';
 import { memoryAdapter } from './memory.js';
 import { kbAdapter } from './kb.js';
 import { tracesAdapter } from './traces.js';
+import { traceAdd } from './storage.js';
 
 const SYSTEM_PROMPT_AGENT = `You are MoonBridge, a powerful browser automation agent in a Chrome extension. You can read and control any tab in the user's browser.
 
@@ -102,7 +103,15 @@ export async function* runAgent({
   // Auto-inject persistent memories
   const memSection = await memoryAdapter.renderForSystem();
   const memText = memSection ? memSection + '\n\n' : '';
-  const sysText = memText + userSys + SYSTEM_PROMPT_AGENT;
+  // 5.2 tools_version header — surfaces tool API version so the model knows
+  // when a resumed conversation is talking to a newer/older registry. The
+  // version comes from manifest.json and is read once at runtime.
+  let toolsVersion = '';
+  try {
+    const m = chrome.runtime.getManifest();
+    toolsVersion = `MoonBridge tools_version: ${m.version}\n\n`;
+  } catch {}
+  const sysText = toolsVersion + memText + userSys + SYSTEM_PROMPT_AGENT;
   const cc = enableCaching ? { type: 'ephemeral', ttl: cacheTtl } : null;
   const systemBlocks = enableCaching
     ? [{ type: 'text', text: sysText, cache_control: cc }]
@@ -232,6 +241,16 @@ export async function* runAgent({
           durationMs: Date.now() - t0,
         }).catch(() => {});
       }
+      // 5.3 — tracelog ring buffer for /dump-trace bug reports.
+      // Always-on, IDB-backed, capped at 1000 entries.
+      traceAdd({
+        tool: b.name,
+        input: b.input || {},
+        output: typeof result.content === 'string' ? result.content : (previewText || ''),
+        durationMs: Date.now() - t0,
+        error: result.is_error ? (typeof result.content === 'string' ? result.content : 'error') : null,
+        contextId: traceId || '',
+      }).catch(() => {});
       return out;
     }
 

@@ -1,3 +1,4 @@
+// @ts-check
 // =====================================================================
 // MoonBridge — production storage layer
 // =====================================================================
@@ -311,6 +312,117 @@ export async function pruneOldBlobs(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
   }
   if (dropped) logger.info(`pruned ${dropped} old blobs`);
   return dropped;
+}
+
+// ---------- Tracelog ring buffer ----------
+// 1000-entry ring of recent tool executions. Use `/dump-trace` from the
+// sidepanel command palette to copy the last N to clipboard for bug reports.
+// Each entry stays small (truncated input/output) — bounded total ~2MB.
+
+const STORE_TRACE = 'tracelog';
+const TRACE_MAX = 1000;
+const TRACE_FIELD_CAP = 2000;
+let _traceDbPromise = null;
+
+function _openTraceDB() {
+  if (_traceDbPromise) return _traceDbPromise;
+  _traceDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open('moonbridge-trace', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_TRACE)) {
+        const s = db.createObjectStore(STORE_TRACE, { keyPath: 'id', autoIncrement: true });
+        s.createIndex('ts', 'ts', { unique: false });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return _traceDbPromise;
+}
+
+function _truncForTrace(v) {
+  if (v == null) return v;
+  if (typeof v === 'string') return v.length > TRACE_FIELD_CAP ? v.slice(0, TRACE_FIELD_CAP) + `…[+${v.length - TRACE_FIELD_CAP}ch]` : v;
+  if (typeof v === 'object') {
+    try {
+      const s = JSON.stringify(v);
+      if (s.length <= TRACE_FIELD_CAP) return v;
+      return s.slice(0, TRACE_FIELD_CAP) + `…[+${s.length - TRACE_FIELD_CAP}ch]`;
+    } catch { return '[unserializable]'; }
+  }
+  return v;
+}
+
+export async function traceAdd(entry) {
+  try {
+    const db = await _openTraceDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_TRACE, 'readwrite');
+      const s = tx.objectStore(STORE_TRACE);
+      const rec = {
+        ts: Date.now(),
+        tool: entry.tool || '',
+        input: _truncForTrace(entry.input),
+        output: _truncForTrace(entry.output),
+        durationMs: entry.durationMs || 0,
+        error: entry.error || null,
+        contextId: entry.contextId || '',
+      };
+      s.add(rec).onsuccess = () => {
+        // Trim head to maintain ring size
+        s.count().onsuccess = (ev) => {
+          const total = ev.target.result;
+          if (total > TRACE_MAX) {
+            const cur = s.openCursor();
+            cur.onsuccess = (e) => {
+              const c = e.target.result;
+              if (c) {
+                if (total - TRACE_MAX > 0) { c.delete(); c.continue(); }
+              }
+            };
+          }
+          resolve();
+        };
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    logger.warn('traceAdd failed:', e.message);
+  }
+}
+
+export async function traceList(limit = 50) {
+  try {
+    const db = await _openTraceDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_TRACE, 'readonly');
+      const s = tx.objectStore(STORE_TRACE);
+      const out = [];
+      const cur = s.index('ts').openCursor(null, 'prev');
+      cur.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c && out.length < limit) { out.push(c.value); c.continue(); }
+        else resolve(out);
+      };
+      cur.onerror = () => resolve([]);
+    });
+  } catch { return []; }
+}
+
+export async function traceDump(limit = 100) {
+  const entries = await traceList(limit);
+  return entries.reverse(); // chronological order
+}
+
+export async function traceClear() {
+  try {
+    const db = await _openTraceDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_TRACE, 'readwrite');
+      tx.objectStore(STORE_TRACE).clear().onsuccess = () => resolve();
+    });
+  } catch {}
 }
 
 // ---------- Storage diagnostics ----------
