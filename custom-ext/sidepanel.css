@@ -1707,12 +1707,18 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 11px;
-  padding: 7px 0;
+  padding: 8px 0;
   position: relative;
+  transition: padding 240ms var(--ease);
   /* IMPORTANT: animate translateY (not translateX) so the .batch-body
      overflow-y:auto doesn't clip the entry. translateX caused slide-in
      to be invisible because overflow-y:auto forces overflow-x:auto. */
   animation: item-slide-in 360ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
+}
+/* Running gets extra breathing room so the bigger icon + text doesn't
+   feel cramped */
+.activity-item.running {
+  padding: 10px 0;
 }
 @keyframes item-slide-in {
   0%   { opacity: 0; transform: translateY(-8px) scale(0.96); }
@@ -1740,15 +1746,15 @@ body {
 
 /* Status icon circle */
 .action-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.08);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   flex-shrink: 0;
   z-index: 1;
   position: relative;
@@ -1763,12 +1769,15 @@ body {
   }
 }
 .activity-item.running .action-icon {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
   border-color: var(--accent);
-  background: rgba(217, 119, 87, 0.10);
+  background: rgba(217, 119, 87, 0.12);
   color: var(--accent);
   box-shadow:
-    0 0 0 3px rgba(217, 119, 87, 0.10),
-    0 0 8px rgba(217, 119, 87, 0.20);
+    0 0 0 3px rgba(217, 119, 87, 0.12),
+    0 0 12px rgba(217, 119, 87, 0.25);
 }
 .activity-item.running .action-icon::before {
   content: '';
@@ -1832,29 +1841,46 @@ body {
 .action-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  line-height: 1.45;
+  gap: 9px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .action-text {
   color: var(--text);
   font-weight: 500;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
   flex-shrink: 0;
+  font-size: 13px;
+  transition: all 240ms var(--ease);
 }
-.activity-item.completed .action-text { color: var(--text-muted); font-weight: 400; }
-.activity-item.failed .action-text { color: var(--error); }
+/* Running state: make verb bigger + accent gradient text — easier to scan */
+.activity-item.running .action-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--accent) 0%, rgba(232, 153, 116, 0.95) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.012em;
+}
+.activity-item.completed .action-text { color: var(--text-muted); font-weight: 400; font-size: 12.5px; }
+.activity-item.failed .action-text { color: var(--error); font-weight: 600; }
 
 .action-summary {
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   min-width: 0;
   font-weight: 400;
+  transition: all 240ms var(--ease);
+}
+.activity-item.running .action-summary {
+  color: var(--text-muted);
+  font-size: 12.5px;
 }
 
 /* Tool badge — capsule with "Tool:" prefix support */
@@ -1868,13 +1894,13 @@ body {
     linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.018) 100%);
   border: 1px solid rgba(255, 255, 255, 0.07);
   font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-muted);
   font-weight: 500;
   letter-spacing: 0;
   flex-shrink: 0;
   opacity: 0.85;
-  transition: all var(--transition);
+  transition: all 240ms var(--ease);
 }
 .tool-badge:hover { opacity: 1; border-color: rgba(217, 119, 87, 0.25); color: var(--accent); }
 .tool-badge::before {
@@ -1882,6 +1908,21 @@ body {
   color: var(--text-dim);
   font-weight: 400;
   opacity: 0.65;
+}
+/* Running state: bigger badge + accent border so it pops */
+.activity-item.running .tool-badge {
+  font-size: 11px;
+  padding: 3px 9px;
+  background:
+    linear-gradient(180deg, rgba(217, 119, 87, 0.10) 0%, rgba(217, 119, 87, 0.04) 100%);
+  border-color: rgba(217, 119, 87, 0.28);
+  color: var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.06);
+}
+.activity-item.running .tool-badge::before {
+  color: var(--accent);
+  opacity: 0.5;
 }
 @media (prefers-color-scheme: light) {
   .tool-badge {
@@ -1891,7 +1932,7 @@ body {
 }
 
 .action-meta {
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-dim);
   margin-left: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
