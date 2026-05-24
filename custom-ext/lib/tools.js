@@ -70,13 +70,14 @@ export const ALL_TOOLS = [
   // ===== Interaction =====
   {
     name: 'click',
-    description: 'Click an element. Provide CSS selector or #ref-N from get_page.',
+    description: 'Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets.',
     input_schema: {
       type: 'object',
       properties: {
         selector: { type: 'string' },
         tab_id: { type: 'integer' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Default left.' },
+        timeout_ms: { type: 'integer', description: 'Max wait for element to appear (default 600).' },
       },
       required: ['selector'],
     },
@@ -1638,9 +1639,10 @@ async function needsApproval(name, input, ctx) {
 async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_shadow = true }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) {
-    return { content: `Cannot inspect restricted page: ${tab.url}.\n` +
-                      `(chrome://, edge://, file://, and similar internal pages are blocked by browser policy. ` +
-                      `Try a normal http(s) page instead.)` };
+    return { is_error: true, error_code: ERR_CODES.RESTRICTED,
+             content: `Cannot inspect restricted page: ${tab.url}. ` +
+                      `chrome://, edge://, file://, and similar internal pages are blocked by browser policy. ` +
+                      `Try a normal http(s) page instead.` };
   }
   await indicator(tab.id, { type: 'CC_TOAST', text: `Reading ${tab_id ? 'tab ' + tab_id : 'page'}…` });
   const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow]);
@@ -1929,10 +1931,10 @@ function getConsoleInPage(limit) {
 // INTERACTION TOOLS
 // =====================================================================
 
-async function tool_click({ selector, tab_id, button = 'left' }) {
+async function tool_click({ selector, tab_id, button = 'left', timeout_ms = 600 }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
-  // Auto-retry: try selector now, then poll up to 1.5s if not found yet
+  // Auto-retry: try selector now, then poll up to timeout_ms if not found yet
   let center = await chrome.tabs.sendMessage(tab.id, { type: 'CC_HIGHLIGHT', selector }).catch(() => null);
   let result = null;
   const start = Date.now();
@@ -1945,12 +1947,15 @@ async function tool_click({ selector, tab_id, button = 'left' }) {
     await indicator(tab.id, { type: 'CC_TOAST', text: `Click ${selector}` });
     result = await execIsolated(tab.id, clickInPage, [selector, button]);
     if (result?.ok) break;
-    if (Date.now() - start > 1500) break;
-    await new Promise((r) => setTimeout(r, 250));
+    if (Date.now() - start > timeout_ms) break;
+    await new Promise((r) => setTimeout(r, 200));
     center = await chrome.tabs.sendMessage(tab.id, { type: 'CC_HIGHLIGHT', selector }).catch(() => null);
   }
   await indicator(tab.id, { type: 'CC_UNHIGHLIGHT' });
-  if (!result?.ok) return { is_error: true, content: result?.error || 'Click failed (after auto-retry)' };
+  if (!result?.ok) {
+    return { is_error: true, error_code: ERR_CODES.NOT_FOUND,
+             content: result?.error || `Click failed: selector "${selector}" not found within ${timeout_ms}ms` };
+  }
   await new Promise((r) => setTimeout(r, 350));
   await waitForTabComplete(tab.id, 5000);
   const newTab = await chrome.tabs.get(tab.id);
@@ -3796,11 +3801,16 @@ async function tool_listFrames({ tab_id }) {
 // =====================================================================
 
 async function tool_findByText({ text, tag, tab_id }) {
-  if (!text) return { is_error: true, content: 'text required.' };
+  if (!text) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'text required.' };
   const tab = await resolveTab(tab_id);
-  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+  if (isRestrictedUrl(tab.url)) {
+    return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: `Restricted page: ${tab.url}` };
+  }
   const r = await execIsolated(tab.id, findByTextInPage, [text, tag || null]);
-  if (!r?.length) return { content: `No element matched "${text}".` };
+  if (!r?.length) {
+    return { is_error: true, error_code: ERR_CODES.NOT_FOUND,
+             content: `No element matched "${text}"${tag ? ` in <${tag}>` : ''}.` };
+  }
   const lines = [`Found ${r.length} match(es) for "${text}":`];
   for (const m of r.slice(0, 20)) {
     lines.push(`#ref-${m.ref}  [${m.tag}]  ${m.label}`);

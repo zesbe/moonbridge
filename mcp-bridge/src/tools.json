@@ -99,7 +99,7 @@
   },
   {
     "name": "click",
-    "description": "Click an element. Provide CSS selector or #ref-N from get_page.",
+    "description": "Click an element. Provide CSS selector or #ref-N from get_page. Default timeout is fast (600ms) — pass timeout_ms higher for slow-loading targets.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -117,6 +117,10 @@
             "middle"
           ],
           "description": "Default left."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Max wait for element to appear (default 600)."
         }
       },
       "required": [
