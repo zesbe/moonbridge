@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "1.7.6",
-  "description": "Powerful AI sidepanel + browser agent for any Anthropic-compatible endpoint — 153 tools, fix multi-turn timeline animations, click error semantics, hot-reload",
+  "version": "1.7.7",
+  "description": "Powerful AI sidepanel + browser agent for any Anthropic-compatible endpoint — 153 tools, restored timeline animations, click error semantics, hot-reload",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
