@@ -1811,5 +1811,42 @@
         }
       }
     }
+  },
+  {
+    "name": "attach_file",
+    "description": "Send a file directly to the user's chat (instead of downloading). Use when generating output the user wants to see/save: PDFs, CSVs, JSON exports, images, code snippets as files. The file shows up inline in the chat with a download button.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "e.g. \"report.csv\", \"data.json\", \"screenshot.png\""
+        },
+        "content": {
+          "type": "string",
+          "description": "File contents. UTF-8 string by default, or base64 if encoding=base64."
+        },
+        "mime_type": {
+          "type": "string",
+          "description": "e.g. \"text/csv\", \"application/json\", \"image/png\" (default: text/plain)."
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ],
+          "description": "utf8 (default) or base64 for binary files."
+        },
+        "caption": {
+          "type": "string",
+          "description": "Optional one-line caption shown above the file."
+        }
+      },
+      "required": [
+        "filename",
+        "content"
+      ]
+    }
   }
 ]

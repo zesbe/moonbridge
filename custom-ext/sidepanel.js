@@ -551,7 +551,97 @@ async function indicatorBroadcast(msg) {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'CC_STOP_REQUESTED') abortCtrl?.abort();
+  if (msg?.type === 'CC_ATTACH_FILE') renderAttachmentCard(msg);
 });
+
+function renderAttachmentCard({ filename, mime_type, data_url, size, caption }) {
+  ensureNoEmpty();
+  const wrap = document.createElement('div');
+  wrap.className = 'attachment-card';
+
+  // Caption (optional)
+  if (caption) {
+    const cap = document.createElement('div');
+    cap.className = 'attachment-caption';
+    cap.textContent = caption;
+    wrap.appendChild(cap);
+  }
+
+  // Inline image preview if it's an image
+  if (mime_type && mime_type.startsWith('image/')) {
+    const img = document.createElement('img');
+    img.className = 'attachment-image';
+    img.src = data_url;
+    img.alt = filename;
+    img.addEventListener('click', () => showImageZoom(data_url));
+    wrap.appendChild(img);
+  }
+
+  // File row: icon + filename + size + download
+  const row = document.createElement('div');
+  row.className = 'attachment-row';
+  const icon = document.createElement('div');
+  icon.className = 'attachment-icon';
+  icon.textContent = iconForMime(mime_type);
+  const meta = document.createElement('div');
+  meta.className = 'attachment-meta';
+  const name = document.createElement('div');
+  name.className = 'attachment-name';
+  name.textContent = filename;
+  const sizeEl = document.createElement('div');
+  sizeEl.className = 'attachment-size';
+  sizeEl.textContent = formatBytes(size || 0);
+  meta.appendChild(name);
+  meta.appendChild(sizeEl);
+
+  const dl = document.createElement('a');
+  dl.className = 'attachment-download';
+  dl.href = data_url;
+  dl.download = filename;
+  dl.textContent = '⬇';
+  dl.title = 'Download';
+
+  row.appendChild(icon);
+  row.appendChild(meta);
+  row.appendChild(dl);
+  wrap.appendChild(row);
+
+  // Optional inline preview for text-y files (CSV, JSON, plaintext, code)
+  if (mime_type && /^(text\/|application\/(json|xml|x-yaml|javascript))/.test(mime_type) && size < 100_000) {
+    try {
+      const b64 = data_url.split(',')[1];
+      const text = decodeURIComponent(escape(atob(b64)));
+      if (text.length < 8000) {
+        const pre = document.createElement('pre');
+        pre.className = 'attachment-preview';
+        pre.textContent = text;
+        wrap.appendChild(pre);
+      }
+    } catch {}
+  }
+
+  messagesEl.appendChild(wrap);
+  scrollToBottom();
+}
+
+function iconForMime(mime) {
+  if (!mime) return '📄';
+  if (mime.startsWith('image/')) return '🖼';
+  if (mime.startsWith('video/')) return '🎬';
+  if (mime.startsWith('audio/')) return '🎵';
+  if (mime.includes('json') || mime.includes('yaml')) return '⚙';
+  if (mime.includes('csv') || mime.includes('spreadsheet')) return '📊';
+  if (mime.includes('pdf')) return '📕';
+  if (mime.includes('zip') || mime.includes('tar') || mime.includes('compressed')) return '📦';
+  if (mime.startsWith('text/')) return '📝';
+  return '📎';
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
 
 // =====================================================================
 // UI helpers

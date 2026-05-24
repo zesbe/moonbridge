@@ -1130,6 +1130,23 @@ export const ALL_TOOLS = [
       },
     },
   },
+
+  // ===== Attach file inline to chat =====
+  {
+    name: 'attach_file',
+    description: 'Send a file directly to the user\'s chat (instead of downloading). Use when generating output the user wants to see/save: PDFs, CSVs, JSON exports, images, code snippets as files. The file shows up inline in the chat with a download button.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        filename: { type: 'string', description: 'e.g. "report.csv", "data.json", "screenshot.png"' },
+        content: { type: 'string', description: 'File contents. UTF-8 string by default, or base64 if encoding=base64.' },
+        mime_type: { type: 'string', description: 'e.g. "text/csv", "application/json", "image/png" (default: text/plain).' },
+        encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'utf8 (default) or base64 for binary files.' },
+        caption: { type: 'string', description: 'Optional one-line caption shown above the file.' },
+      },
+      required: ['filename', 'content'],
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1305,6 +1322,7 @@ export async function executeTool(name, input, ctx = {}) {
       case 'a11y_audit':     return await tool_a11yAudit(input || {});
       case 'mock_api_start': return await tool_mockApiStart(input || {});
       case 'mock_api_stop':  return await tool_mockApiStop(input || {});
+      case 'attach_file':    return await tool_attachFile(input || {});
       case 'web_search':     return await tool_webSearch(input || {});
       case 'youtube_transcript': return await tool_youtubeTranscript(input || {});
       case 'read_pdf':       return await tool_readPdf(input || {});
@@ -1345,62 +1363,122 @@ async function needsApproval(name, input, ctx) {
 // READING TOOLS
 // =====================================================================
 
-async function tool_getPage({ max_chars = 2500, tab_id, full = false }) {
+async function tool_getPage({ max_chars = 2500, tab_id, full = false, include_shadow = true }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) {
-    return { content: `Cannot inspect restricted page: ${tab.url}.` };
+    return { content: `Cannot inspect restricted page: ${tab.url}.\n` +
+                      `(chrome://, edge://, file://, and similar internal pages are blocked by browser policy. ` +
+                      `Try a normal http(s) page instead.)` };
   }
   await indicator(tab.id, { type: 'CC_TOAST', text: `Reading ${tab_id ? 'tab ' + tab_id : 'page'}…` });
-  const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full]);
+  const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow]);
   if (!snap) return { content: 'No snapshot returned.' };
   const lines = [];
   lines.push(`URL: ${snap.url}`);
   lines.push(`TITLE: ${snap.title}`);
   lines.push(`TAB: id=${tab.id}${tab.active ? ' (active)' : ''}`);
   lines.push(`SCROLL: y=${snap.scrollY}/${snap.scrollHeight} (viewport=${snap.viewportH})`);
+
+  // Explicit truncation flag — addresses AI feedback "agent kadang tidak sadar isinya terpotong"
+  if (snap.text_truncated) {
+    lines.push(`⚠ TRUNCATED: showing ${snap.text_chars} of ${snap.total_chars} chars (${Math.round(snap.text_chars / snap.total_chars * 100)}%). ` +
+               `Re-call with max_chars=${Math.min(snap.total_chars, 20000)} to see more.`);
+  }
+  if (snap.elements_truncated) {
+    lines.push(`⚠ ELEMENTS TRUNCATED: showing 50 of ${snap.total_elements}. Use find_element to search the rest.`);
+  }
+  if (snap.shadow_roots_found) {
+    lines.push(`📦 Shadow DOM: traversed ${snap.shadow_roots_found} shadow root(s).`);
+  }
+
   if (snap.text) {
     lines.push('---PAGE TEXT---');
     lines.push(snap.text);
   }
   if (snap.elements?.length) {
-    lines.push(`---INTERACTIVE ELEMENTS (${snap.elements.length})---`);
+    lines.push(`---INTERACTIVE ELEMENTS (${snap.elements.length}${snap.elements_truncated ? '/' + snap.total_elements : ''})---`);
     lines.push('(use #ref-N as selector for click/type)');
     for (const el of snap.elements) {
-      lines.push(`#ref-${el.ref}  [${el.tag}${el.type ? '/' + el.type : ''}]  ${el.label}`);
+      const shadowMark = el.in_shadow ? ' 🟣' : '';
+      lines.push(`#ref-${el.ref}  [${el.tag}${el.type ? '/' + el.type : ''}]${shadowMark}  ${el.label}`);
     }
   }
   return { content: lines.join('\n') };
 }
 
-function pageSnapshotInPage(maxChars, full) {
+function pageSnapshotInPage(maxChars, full, includeShadow) {
   const url = location.href, title = document.title;
   const scrollY = window.scrollY;
   const scrollHeight = document.documentElement.scrollHeight;
   const viewportH = window.innerHeight;
 
+  let shadowRootsFound = 0;
+
+  // Recursively walk the DOM, descending into open shadow roots.
+  // Closed shadow roots are inaccessible by spec — nothing we can do there.
+  function* walkAll(root) {
+    const stack = [root];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node) continue;
+      yield node;
+      if (node.shadowRoot && includeShadow) {
+        shadowRootsFound++;
+        for (const c of node.shadowRoot.children) stack.push(c);
+      }
+      if (node.children) {
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          stack.push(node.children[i]);
+        }
+      }
+    }
+  }
+
   function getVisibleText() {
     const body = document.body;
-    if (!body) return '';
-    const w = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        const p = node.parentElement;
-        if (!p) return NodeFilter.FILTER_REJECT;
-        if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
-        const cs = getComputedStyle(p);
-        if (cs.display === 'none' || cs.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    const out = []; let total = 0; let n;
-    while ((n = w.nextNode())) {
-      const t = n.nodeValue.replace(/\s+/g, ' ').trim();
-      if (!t) continue;
-      out.push(t);
-      total += t.length + 1;
-      if (total > maxChars) break;
+    if (!body) return { text: '', total: 0, truncated: false };
+    // First, count total available text (without truncation) by walking all nodes
+    let totalChars = 0;
+    let collectedChars = 0;
+    const out = [];
+
+    const visitTextIn = (root) => {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          const p = node.parentElement;
+          if (!p) return NodeFilter.FILTER_REJECT;
+          if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+          const cs = getComputedStyle(p);
+          if (cs.display === 'none' || cs.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      let n;
+      while ((n = w.nextNode())) {
+        const t = n.nodeValue.replace(/\s+/g, ' ').trim();
+        if (!t) continue;
+        totalChars += t.length + 1;
+        if (collectedChars < maxChars) {
+          out.push(t);
+          collectedChars += t.length + 1;
+        }
+      }
+    };
+
+    visitTextIn(body);
+
+    // Also walk into shadow roots if enabled
+    if (includeShadow) {
+      for (const node of walkAll(body)) {
+        if (node.shadowRoot) {
+          visitTextIn(node.shadowRoot);
+        }
+      }
     }
-    return out.join('\n').slice(0, maxChars);
+
+    const finalText = out.join('\n').slice(0, maxChars);
+    return { text: finalText, total: totalChars, truncated: totalChars > maxChars };
   }
 
   function isVisible(el) {
@@ -1420,21 +1498,53 @@ function pageSnapshotInPage(maxChars, full) {
     if (!t && el.title) t = el.title;
     return t.slice(0, 80);
   }
-  const sel = 'a[href], button, input:not([type=hidden]), textarea, select, [role=button], [role=link], [role=textbox], [role=combobox], [role=tab], [role=menuitem], [contenteditable=""], [contenteditable=true], [onclick]';
+  const isInteractive = (el) => {
+    if (!el.tagName) return false;
+    const tag = el.tagName.toLowerCase();
+    if (['a', 'button', 'textarea', 'select'].includes(tag)) return el.tagName !== 'A' || el.hasAttribute('href');
+    if (tag === 'input' && el.getAttribute('type') !== 'hidden') return true;
+    const role = el.getAttribute('role');
+    if (role && ['button','link','textbox','combobox','tab','menuitem','checkbox','radio'].includes(role)) return true;
+    const ce = el.getAttribute('contenteditable');
+    if (ce === '' || ce === 'true') return true;
+    if (el.hasAttribute('onclick')) return true;
+    return false;
+  };
+
   const elements = [];
-  const all = document.querySelectorAll(sel);
+  const allCandidates = [];
+  // Walk light DOM + (optionally) shadow DOM
+  for (const node of walkAll(document.body)) {
+    if (isInteractive(node)) {
+      allCandidates.push({ el: node, in_shadow: !!node.getRootNode().host });
+    }
+  }
+
   let ref = 0;
   window.__claudeRefs__ = window.__claudeRefs__ || {};
-  for (const el of all) {
+  for (const c of allCandidates) {
+    const el = c.el;
     if (!full && !isVisible(el)) continue;
     ref++;
     window.__claudeRefs__[ref] = el;
     const tag = el.tagName.toLowerCase();
     const type = el.getAttribute('type') || el.getAttribute('role') || '';
-    elements.push({ ref, tag, type, label: labelFor(el) });
+    elements.push({ ref, tag, type, label: labelFor(el), in_shadow: c.in_shadow });
     if (elements.length >= 50) break;
   }
-  return { url, title, scrollY, scrollHeight, viewportH, text: getVisibleText(), elements };
+
+  const t = getVisibleText();
+  return {
+    url, title, scrollY, scrollHeight, viewportH,
+    text: t.text,
+    text_chars: t.text.length,
+    total_chars: t.total,
+    text_truncated: t.truncated,
+    elements,
+    total_elements: allCandidates.length,
+    elements_truncated: allCandidates.length > 50,
+    shadow_roots_found: shadowRootsFound,
+  };
 }
 
 async function tool_findElement({ query, tab_id, limit = 20 }) {
@@ -4336,4 +4446,59 @@ async function tool_mockApiStop({ tab_id }) {
   const count = rules.length;
   _MOCK_RULES.delete(tab.id);
   return { content: `Stopped ${count} mock rule(s) on tab ${tab.id}.` };
+}
+
+// =====================================================================
+// ATTACH FILE — send file inline to user's chat (no Downloads folder)
+// =====================================================================
+
+async function tool_attachFile({ filename, content, mime_type = 'text/plain', encoding = 'utf8', caption }) {
+  if (!filename) return { is_error: true, content: 'filename is required.' };
+  if (content == null) return { is_error: true, content: 'content is required.' };
+
+  // Build a data URL for the file
+  let dataUrl;
+  let sizeBytes;
+  try {
+    if (encoding === 'base64') {
+      // Validate it's actually base64
+      const cleaned = String(content).replace(/\s/g, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(cleaned)) {
+        return { is_error: true, content: 'encoding=base64 but content contains invalid chars.' };
+      }
+      dataUrl = `data:${mime_type};base64,${cleaned}`;
+      // Calculate decoded size
+      sizeBytes = Math.floor(cleaned.length * 3 / 4);
+    } else {
+      const text = String(content);
+      // UTF-8 → base64
+      const b64 = btoa(unescape(encodeURIComponent(text)));
+      dataUrl = `data:${mime_type};base64,${b64}`;
+      sizeBytes = new Blob([text]).size;
+    }
+  } catch (e) {
+    return { is_error: true, content: `Encoding error: ${e.message}` };
+  }
+
+  // Broadcast to sidepanel — it will render an inline attachment card
+  try {
+    chrome.runtime.sendMessage({
+      type: 'CC_ATTACH_FILE',
+      filename,
+      mime_type,
+      data_url: dataUrl,
+      size: sizeBytes,
+      caption: caption || null,
+    }).catch(() => {});
+  } catch {}
+
+  return {
+    content: `📎 Attached "${filename}" (${formatBytes(sizeBytes)}) to chat.${caption ? ' Caption: ' + caption : ''}`,
+  };
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
