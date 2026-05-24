@@ -954,6 +954,11 @@ function createAssistantMessage() {
   ensureNoEmpty();
   const wrap = document.createElement('div');
   wrap.className = 'msg assistant';
+  // Lifecycle states: creating → streaming → finalizing → completed.
+  // CSS uses data-state to switch visual styling (cursor blink during
+  // streaming, soft fade on completed, etc).
+  wrap.dataset.state = 'creating';
+  wrap.dataset.id = 'asst_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
   // Avatar + name header (Claude Chrome style)
   const head = document.createElement('div');
@@ -988,7 +993,24 @@ function createAssistantMessage() {
   wrap.appendChild(body);
   messagesEl.appendChild(wrap);
   scrollToBottom();
+  // Transition creating → streaming on next paint so CSS picks up the change.
+  // Without this, the data-state="streaming" rules wouldn't trigger
+  // transitions because the element already had streaming on first render.
+  requestAnimationFrame(() => {
+    wrap.dataset.state = 'streaming';
+  });
   return { wrap, thinkBlock, thinkBody, body };
+}
+
+// Mark assistant message lifecycle complete — removes streaming caret,
+// applies completed-state styling. Called at turn end.
+function finalizeAssistantMessage(ui) {
+  if (!ui?.wrap) return;
+  ui.wrap.dataset.state = 'finalizing';
+  // Brief finalizing window for any "✓ done" affordance, then completed
+  setTimeout(() => {
+    if (ui.wrap.isConnected) ui.wrap.dataset.state = 'completed';
+  }, 220);
 }
 
 function appendError(text) {
@@ -1875,6 +1897,7 @@ async function sendChat(userText, userContent) {
     if (textBuf) {
       conversation.push({ role: 'assistant', content: textBuf });
       attachAssistantActions(ui.wrap, () => textBuf, conversation.length - 1);
+      finalizeAssistantMessage(ui);
       scheduleChatSave();
     } else {
       conversation.pop();
@@ -2002,6 +2025,8 @@ async function runAgentTurn(continuingExisting = false) {
     if (assistantUI && lastTextBufRef.value) {
       const captured = lastTextBufRef.value;
       attachAssistantActions(assistantUI.wrap, () => captured);
+      // Lifecycle: streaming → finalizing → completed (caret fades)
+      finalizeAssistantMessage(assistantUI);
     }
     // Mark ticker as done — auto-fade and remove from DOM so it doesn't
     // leave a permanent ghost row taking vertical space after completion.

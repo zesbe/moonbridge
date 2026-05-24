@@ -812,6 +812,75 @@ body {
   margin-left: 4px;
   animation: msg-in 320ms cubic-bezier(0.22, 0.85, 0.32, 1.05);
 }
+
+/* =====================================================================
+   Assistant message lifecycle states (data-state attribute on .msg.assistant)
+     creating   → just inserted, fade-in only
+     streaming  → tokens flowing in, blinking caret active
+     finalizing → text done, caret fading out
+     completed  → settled, no caret
+   Each state retriggers transitions on every new turn — no stale state.
+   ===================================================================== */
+
+.msg.assistant[data-state="streaming"] .assistant-body::after {
+  content: '▍';
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--accent);
+  font-weight: 400;
+  animation: caret-blink 1.0s steps(2, end) infinite;
+  vertical-align: baseline;
+  line-height: 1;
+}
+@keyframes caret-blink {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.msg.assistant[data-state="streaming"] .assistant-name::after {
+  content: ' · streaming';
+  font-size: 10px;
+  color: var(--accent);
+  opacity: 0.65;
+  -webkit-text-fill-color: var(--accent);
+  font-weight: 400;
+  margin-left: 6px;
+  letter-spacing: 0;
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  animation: stream-label-pulse 1.4s ease-in-out infinite;
+}
+@keyframes stream-label-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.8; }
+}
+.msg.assistant[data-state="streaming"]::before {
+  /* Brighten the accent bar while streaming */
+  background: linear-gradient(180deg,
+    rgba(217, 119, 87, 0.85) 0%,
+    rgba(217, 119, 87, 0.50) 50%,
+    rgba(217, 119, 87, 0.20) 100%);
+  animation: bar-pulse 1.6s ease-in-out infinite;
+}
+@keyframes bar-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 87, 0); }
+  50%      { box-shadow: 0 0 6px 0 rgba(217, 119, 87, 0.35); }
+}
+.msg.assistant[data-state="finalizing"] .assistant-body::after {
+  content: '▍';
+  display: inline-block;
+  color: var(--accent);
+  margin-left: 2px;
+  opacity: 0;
+  animation: caret-fade-out 220ms ease-out forwards;
+}
+@keyframes caret-fade-out {
+  from { opacity: 0.6; }
+  to   { opacity: 0; }
+}
+.msg.assistant[data-state="completed"] .assistant-body::after {
+  content: none;
+}
 .msg.assistant::before {
   content: '';
   position: absolute;
