@@ -1224,6 +1224,88 @@ export const ALL_TOOLS = [
       required: ['tab_ids'],
     },
   },
+
+  // ===== Virtual workspace (sandbox storage, separate from Downloads) =====
+  {
+    name: 'workspace_write',
+    description: 'Write a file to MoonBridge\'s virtual workspace (persists across sessions, not the user\'s Downloads). Use to store intermediate results, drafts, or notes the agent will reuse later.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Virtual path like "research/notes.md" or "data.json".' },
+        content: { type: 'string', description: 'File contents (utf-8 or base64).' },
+        encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'Default utf8.' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'workspace_read',
+    description: 'Read a file from the virtual workspace.',
+    input_schema: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'workspace_list',
+    description: 'List all files in the virtual workspace, optionally filtered by path prefix.',
+    input_schema: {
+      type: 'object',
+      properties: { prefix: { type: 'string', description: 'e.g. "research/" to list only that folder.' } },
+    },
+  },
+  {
+    name: 'workspace_delete',
+    description: 'Delete a file (or all files matching prefix) from the virtual workspace.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Exact path to delete.' },
+        prefix: { type: 'string', description: 'Or pass prefix to delete all matching.' },
+      },
+    },
+  },
+
+  // ===== Cross-tab diff =====
+  {
+    name: 'diff_tabs',
+    description: 'Compare two tabs (DOM text, structure, or metadata). Useful for QA regression — load same page in two states and see what changed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_a: { type: 'integer' },
+        tab_b: { type: 'integer' },
+        mode: { type: 'string', enum: ['text', 'structure', 'meta'], description: 'text=visible text diff (default), structure=DOM tree shape, meta=title/url/headers' },
+        max_chars: { type: 'integer', description: 'Default 8000.' },
+      },
+      required: ['tab_a', 'tab_b'],
+    },
+  },
+
+  // ===== Auth detection =====
+  {
+    name: 'check_auth',
+    description: 'Detect whether the user is logged in to a site (heuristic: looks for login forms, "sign in" links, user avatar, etc). Use BEFORE actions that need auth, to avoid acting on a guest tab.',
+    input_schema: {
+      type: 'object',
+      properties: { tab_id: { type: 'integer' } },
+    },
+  },
+
+  // ===== Worker / SW console =====
+  {
+    name: 'worker_console',
+    description: 'Capture console logs from web workers and service workers (not just main thread). Returns recent log entries.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        limit: { type: 'integer', description: 'Max entries (default 50).' },
+      },
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1421,6 +1503,13 @@ export async function executeTool(name, input, ctx = {}) {
       case 'set_readonly':   return await tool_setReadonly(input || {});
       case 'stable_ref':     return await tool_stableRef(input || {});
       case 'group_tabs':     return await tool_groupTabs(input || {});
+      case 'workspace_write':return await tool_workspaceWrite(input || {});
+      case 'workspace_read': return await tool_workspaceRead(input || {});
+      case 'workspace_list': return await tool_workspaceList(input || {});
+      case 'workspace_delete': return await tool_workspaceDelete(input || {});
+      case 'diff_tabs':      return await tool_diffTabs(input || {});
+      case 'check_auth':     return await tool_checkAuth(input || {});
+      case 'worker_console': return await tool_workerConsole(input || {});
       case 'web_search':     return await tool_webSearch(input || {});
       case 'youtube_transcript': return await tool_youtubeTranscript(input || {});
       case 'read_pdf':       return await tool_readPdf(input || {});
@@ -2102,12 +2191,33 @@ async function tool_wait({ ms = 1000 }) {
   return { content: `Waited ${cap}ms.` };
 }
 
+// Track recent navigations per tab to detect runaway loops
+const _NAV_HISTORY = new Map(); // tabId -> [{url, ts}]
+const _NAV_LIMIT = 8;       // max nav within window
+const _NAV_WINDOW_MS = 30000; // 30 seconds
+
 async function tool_navigate({ url, tab_id }) {
   if (!/^https?:\/\//i.test(url)) {
     if (/^[\w.-]+\.[a-z]{2,}/i.test(url)) url = 'https://' + url;
     else return { is_error: true, content: 'URL must be http(s).' };
   }
   const tab = await resolveTab(tab_id);
+
+  // Rate-limit: prevent runaway navigation loops
+  const now = Date.now();
+  const history = (_NAV_HISTORY.get(tab.id) || []).filter(h => now - h.ts < _NAV_WINDOW_MS);
+  if (history.length >= _NAV_LIMIT) {
+    return {
+      is_error: true,
+      content: `🛑 Navigation rate limit: ${_NAV_LIMIT} navigations in ${_NAV_WINDOW_MS / 1000}s on tab ${tab.id}. ` +
+               `This usually means the agent is stuck in a redirect/reload loop. ` +
+               `Recent: ${history.slice(-3).map(h => h.url).join(' → ')}\n` +
+               `Wait ${Math.ceil((_NAV_WINDOW_MS - (now - history[0].ts)) / 1000)}s before navigating again.`,
+    };
+  }
+  history.push({ url, ts: now });
+  _NAV_HISTORY.set(tab.id, history);
+
   await indicator(tab.id, { type: 'CC_TOAST', text: `→ ${url}` });
   await chrome.tabs.update(tab.id, { url });
   await waitForTabComplete(tab.id, 20000);
@@ -4870,4 +4980,281 @@ async function tool_groupTabs({ tab_ids, title, color = 'orange' }) {
   } catch (e) {
     return { is_error: true, content: `group_tabs error: ${e.message}` };
   }
+}
+
+// =====================================================================
+// VIRTUAL WORKSPACE — sandboxed storage separate from user's Downloads
+// =====================================================================
+
+const _WS_KEY = 'moonbridge_workspace';
+
+async function _wsRead() {
+  const { [_WS_KEY]: ws } = await chrome.storage.local.get([_WS_KEY]);
+  return ws && typeof ws === 'object' ? ws : {};
+}
+async function _wsWrite(ws) { await chrome.storage.local.set({ [_WS_KEY]: ws }); }
+
+async function tool_workspaceWrite({ path, content, encoding = 'utf8' }) {
+  if (!path || content == null) return { is_error: true, content: 'path and content required.' };
+  const ws = await _wsRead();
+  ws[path] = {
+    content: String(content),
+    encoding,
+    updated_at: Date.now(),
+    size: encoding === 'base64' ? Math.floor(content.length * 3 / 4) : new Blob([content]).size,
+  };
+  await _wsWrite(ws);
+  return { content: `✓ Wrote ${path} (${formatBytes(ws[path].size)}). Total files in workspace: ${Object.keys(ws).length}.` };
+}
+
+async function tool_workspaceRead({ path }) {
+  if (!path) return { is_error: true, content: 'path required.' };
+  const ws = await _wsRead();
+  if (!ws[path]) return { is_error: true, content: `File not found: ${path}. Use workspace_list to see available files.` };
+  const f = ws[path];
+  return {
+    content: `--- ${path} (${formatBytes(f.size)}, ${f.encoding}) ---\n${f.content}`
+  };
+}
+
+async function tool_workspaceList({ prefix = '' }) {
+  const ws = await _wsRead();
+  const entries = Object.entries(ws).filter(([p]) => !prefix || p.startsWith(prefix));
+  if (!entries.length) return { content: prefix ? `(no files matching "${prefix}")` : '(workspace empty)' };
+  entries.sort((a, b) => b[1].updated_at - a[1].updated_at);
+  const lines = [`Virtual workspace${prefix ? ' (filter: ' + prefix + ')' : ''} — ${entries.length} file(s):`];
+  for (const [p, f] of entries) {
+    const ago = Math.round((Date.now() - f.updated_at) / 60000);
+    lines.push(`  ${p}  (${formatBytes(f.size)}, ${ago}m ago)`);
+  }
+  return { content: lines.join('\n') };
+}
+
+async function tool_workspaceDelete({ path, prefix }) {
+  const ws = await _wsRead();
+  let removed = 0;
+  if (path && ws[path]) { delete ws[path]; removed = 1; }
+  else if (prefix) {
+    for (const k of Object.keys(ws)) {
+      if (k.startsWith(prefix)) { delete ws[k]; removed++; }
+    }
+  }
+  if (!removed) return { content: 'No matching files.' };
+  await _wsWrite(ws);
+  return { content: `✓ Deleted ${removed} file(s).` };
+}
+
+// =====================================================================
+// CROSS-TAB DIFF
+// =====================================================================
+
+async function tool_diffTabs({ tab_a, tab_b, mode = 'text', max_chars = 8000 }) {
+  if (!tab_a || !tab_b) return { is_error: true, content: 'tab_a and tab_b required.' };
+  let ta, tb;
+  try {
+    ta = await chrome.tabs.get(tab_a);
+    tb = await chrome.tabs.get(tab_b);
+  } catch (e) { return { is_error: true, content: `Tab not found: ${e.message}` }; }
+  if (isRestrictedUrl(ta.url) || isRestrictedUrl(tb.url)) {
+    return { is_error: true, content: 'One or both tabs are restricted pages.' };
+  }
+
+  const grab = async (tabId) => {
+    return await execIsolated(tabId, (m) => {
+      if (m === 'meta') {
+        return {
+          url: location.href,
+          title: document.title,
+          headings: [...document.querySelectorAll('h1, h2, h3')].slice(0, 30).map(h => h.tagName + ':' + (h.innerText || '').trim().slice(0, 80)),
+          forms: document.querySelectorAll('form').length,
+          links: document.querySelectorAll('a[href]').length,
+          images: document.querySelectorAll('img').length,
+        };
+      }
+      if (m === 'structure') {
+        const walk = (el, depth = 0) => {
+          if (depth > 6) return '';
+          let s = '  '.repeat(depth) + el.tagName.toLowerCase();
+          if (el.id) s += '#' + el.id;
+          if (el.children.length) s += ` (${el.children.length})`;
+          s += '\n';
+          for (const c of el.children) s += walk(c, depth + 1);
+          return s;
+        };
+        return walk(document.body || document.documentElement);
+      }
+      // text
+      return (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    }, [mode]);
+  };
+
+  const a = await grab(tab_a);
+  const b = await grab(tab_b);
+
+  if (mode === 'meta') {
+    const lines = ['META DIFF:', `Tab ${tab_a}: ${ta.title}`, `  URL: ${ta.url}`, `  Forms: ${a.forms}, Links: ${a.links}, Images: ${a.images}`];
+    lines.push(`Tab ${tab_b}: ${tb.title}`, `  URL: ${tb.url}`, `  Forms: ${b.forms}, Links: ${b.links}, Images: ${b.images}`);
+    const onlyA = a.headings.filter(h => !b.headings.includes(h));
+    const onlyB = b.headings.filter(h => !a.headings.includes(h));
+    if (onlyA.length) { lines.push('', 'HEADINGS only in A:'); for (const h of onlyA.slice(0, 20)) lines.push('  + ' + h); }
+    if (onlyB.length) { lines.push('', 'HEADINGS only in B:'); for (const h of onlyB.slice(0, 20)) lines.push('  + ' + h); }
+    return { content: lines.join('\n') };
+  }
+
+  // text or structure: line-by-line diff (cheap LCS-free version)
+  const aLines = (typeof a === 'string' ? a : '').split('\n');
+  const bLines = (typeof b === 'string' ? b : '').split('\n');
+  const aSet = new Set(aLines);
+  const bSet = new Set(bLines);
+  const onlyInA = aLines.filter(l => l.trim() && !bSet.has(l));
+  const onlyInB = bLines.filter(l => l.trim() && !aSet.has(l));
+
+  const lines = [`${mode.toUpperCase()} DIFF (tab ${tab_a} vs ${tab_b}):`, `A only: ${onlyInA.length} lines`, `B only: ${onlyInB.length} lines`, ''];
+  if (onlyInA.length) {
+    lines.push('--- only in A ---');
+    for (const l of onlyInA.slice(0, 40)) lines.push('- ' + l.slice(0, 200));
+    if (onlyInA.length > 40) lines.push(`  … ${onlyInA.length - 40} more`);
+  }
+  if (onlyInB.length) {
+    lines.push('--- only in B ---');
+    for (const l of onlyInB.slice(0, 40)) lines.push('+ ' + l.slice(0, 200));
+    if (onlyInB.length > 40) lines.push(`  … ${onlyInB.length - 40} more`);
+  }
+  const out = lines.join('\n');
+  return { content: out.length > max_chars ? out.slice(0, max_chars) + '\n[truncated]' : out };
+}
+
+// =====================================================================
+// CHECK AUTH — heuristic login detection
+// =====================================================================
+
+async function tool_checkAuth({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  const result = await execIsolated(tab.id, () => {
+    const signals = { logged_in: 0, logged_out: 0, indicators: [] };
+
+    // Logged-out signals
+    const loginForms = [...document.querySelectorAll('form')].filter(f => {
+      const html = f.innerHTML.toLowerCase();
+      return /password|sign\s*in|log\s*in/i.test(html);
+    });
+    if (loginForms.length) {
+      signals.logged_out += 3;
+      signals.indicators.push(`login form found (${loginForms.length})`);
+    }
+
+    const signinLinks = [...document.querySelectorAll('a, button')].filter(el => {
+      const t = (el.innerText || el.textContent || '').toLowerCase().trim();
+      return /^(sign\s*in|log\s*in|login|register|sign\s*up)$/.test(t);
+    });
+    if (signinLinks.length) {
+      signals.logged_out += 2;
+      signals.indicators.push(`"sign in/up" link visible`);
+    }
+
+    // Logged-in signals
+    const signoutLinks = [...document.querySelectorAll('a, button')].filter(el => {
+      const t = (el.innerText || el.textContent || '').toLowerCase().trim();
+      return /^(sign\s*out|log\s*out|logout)$/.test(t);
+    });
+    if (signoutLinks.length) {
+      signals.logged_in += 4;
+      signals.indicators.push(`"sign out" link visible`);
+    }
+
+    // Avatar / profile indicators
+    const avatars = document.querySelectorAll('[class*="avatar"], [class*="profile"], [aria-label*="account" i], [aria-label*="profile" i]');
+    if (avatars.length) {
+      signals.logged_in += 2;
+      signals.indicators.push(`avatar/profile element (${avatars.length})`);
+    }
+
+    // Cookies named like session
+    const cookies = document.cookie.split(';').map(c => c.trim().split('=')[0].toLowerCase());
+    const sessionCookies = cookies.filter(c => /session|auth|token|jwt|sid$/.test(c));
+    if (sessionCookies.length) {
+      signals.logged_in += 1;
+      signals.indicators.push(`session cookies: ${sessionCookies.slice(0, 3).join(', ')}`);
+    }
+
+    const verdict = signals.logged_in > signals.logged_out ? 'logged_in'
+                  : signals.logged_out > signals.logged_in ? 'logged_out'
+                  : 'unknown';
+
+    return { verdict, score_in: signals.logged_in, score_out: signals.logged_out, indicators: signals.indicators };
+  });
+
+  if (!result) return { is_error: true, content: 'check_auth failed.' };
+
+  const emoji = result.verdict === 'logged_in' ? '✅' : result.verdict === 'logged_out' ? '❌' : '❓';
+  const lines = [`${emoji} Auth status for ${tab.url}: ${result.verdict.toUpperCase()}`];
+  lines.push(`  Score: logged_in=${result.score_in}, logged_out=${result.score_out}`);
+  if (result.indicators.length) {
+    lines.push('  Indicators:');
+    for (const i of result.indicators) lines.push('    - ' + i);
+  }
+  if (result.verdict !== 'logged_in') {
+    lines.push('', '⚠ Action that requires auth may fail. Ask user to sign in first.');
+  }
+  return { content: lines.join('\n') };
+}
+
+// =====================================================================
+// WORKER / SERVICE WORKER CONSOLE
+// =====================================================================
+//
+// Chrome extensions can't directly attach console to web workers from
+// content scripts, but CDP (debugger) can subscribe to ALL execution
+// contexts including workers. This tool attaches debugger and reads.
+
+const _WORKER_LOG_KEY = 'mb_worker_logs';
+
+async function tool_workerConsole({ tab_id, limit = 50 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, content: 'Restricted page.' };
+
+  // Try to inject a logger into the page that subscribes to worker creation
+  // and proxies their console.log via postMessage. We accumulate in storage.
+
+  // Simpler approach: use CDP Runtime.consoleAPICalled with includeAllExecutionContexts
+  let attached = false;
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    attached = true;
+  } catch (e) {
+    if (!e.message.includes('already attached')) {
+      return { is_error: true, content: `CDP attach failed: ${e.message}` };
+    }
+  }
+
+  const logs = [];
+  const onEvent = (source, method, params) => {
+    if (source.tabId !== tab.id) return;
+    if (method === 'Runtime.consoleAPICalled') {
+      const ctx = params.executionContextId;
+      const args = (params.args || []).map(a => a.value ?? a.description ?? '').join(' ');
+      logs.push({ type: params.type, args, context: ctx, ts: Date.now() });
+    }
+  };
+
+  chrome.debugger.onEvent.addListener(onEvent);
+  try {
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Runtime.enable', {});
+    // Wait briefly to capture some logs
+    await new Promise(r => setTimeout(r, 1500));
+  } finally {
+    chrome.debugger.onEvent.removeListener(onEvent);
+    if (attached) {
+      try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+    }
+  }
+
+  if (!logs.length) return { content: '(no worker/SW console logs captured in 1.5s window)' };
+  const lines = [`Captured ${logs.length} log entries (across all execution contexts):`];
+  for (const l of logs.slice(-limit)) {
+    lines.push(`  [${l.type}] ctx=${l.context}: ${l.args.slice(0, 200)}`);
+  }
+  return { content: lines.join('\n') };
 }

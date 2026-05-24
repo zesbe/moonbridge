@@ -2001,5 +2001,139 @@
         "tab_ids"
       ]
     }
+  },
+  {
+    "name": "workspace_write",
+    "description": "Write a file to MoonBridge's virtual workspace (persists across sessions, not the user's Downloads). Use to store intermediate results, drafts, or notes the agent will reuse later.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Virtual path like \"research/notes.md\" or \"data.json\"."
+        },
+        "content": {
+          "type": "string",
+          "description": "File contents (utf-8 or base64)."
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ],
+          "description": "Default utf8."
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "workspace_read",
+    "description": "Read a file from the virtual workspace.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "workspace_list",
+    "description": "List all files in the virtual workspace, optionally filtered by path prefix.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "description": "e.g. \"research/\" to list only that folder."
+        }
+      }
+    }
+  },
+  {
+    "name": "workspace_delete",
+    "description": "Delete a file (or all files matching prefix) from the virtual workspace.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Exact path to delete."
+        },
+        "prefix": {
+          "type": "string",
+          "description": "Or pass prefix to delete all matching."
+        }
+      }
+    }
+  },
+  {
+    "name": "diff_tabs",
+    "description": "Compare two tabs (DOM text, structure, or metadata). Useful for QA regression — load same page in two states and see what changed.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_a": {
+          "type": "integer"
+        },
+        "tab_b": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "text",
+            "structure",
+            "meta"
+          ],
+          "description": "text=visible text diff (default), structure=DOM tree shape, meta=title/url/headers"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 8000."
+        }
+      },
+      "required": [
+        "tab_a",
+        "tab_b"
+      ]
+    }
+  },
+  {
+    "name": "check_auth",
+    "description": "Detect whether the user is logged in to a site (heuristic: looks for login forms, \"sign in\" links, user avatar, etc). Use BEFORE actions that need auth, to avoid acting on a guest tab.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "worker_console",
+    "description": "Capture console logs from web workers and service workers (not just main thread). Returns recent log entries.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max entries (default 50)."
+        }
+      }
+    }
   }
 ]
