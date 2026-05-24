@@ -2178,5 +2178,565 @@
         "actions"
       ]
     }
+  },
+  {
+    "name": "get_element_info",
+    "description": "All-in-one element inspector. Returns text, value, all attributes, position (rect), visibility, key computed styles, parent path. Replaces multiple get_text/get_value/get_attribute calls.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "smart_click",
+    "description": "Click an element by natural-language description. Tries text match, aria-label, role, placeholder. Use when you don't know exact selector. e.g. \"login button\", \"submit form\".",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Natural language — what to click."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "description"
+      ]
+    }
+  },
+  {
+    "name": "smart_type",
+    "description": "Type into a field identified by label/placeholder/aria-label. e.g. field=\"email\", text=\"user@x.com\" → finds the email input automatically.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "Field label/placeholder/aria-label keyword."
+        },
+        "text": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "press_enter": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "field",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "wait_for_navigation",
+    "description": "Wait until the tab navigates to a new URL and finishes loading. Use after clicks that trigger navigation.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "url_contains": {
+          "type": "string",
+          "description": "Optional substring to match in new URL."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Default 10000."
+        }
+      }
+    }
+  },
+  {
+    "name": "wait_for_element_state",
+    "description": "Wait until element reaches state: visible, hidden, enabled, disabled, stable (no DOM change for 200ms).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "visible",
+            "hidden",
+            "enabled",
+            "disabled",
+            "stable"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Default 5000."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector",
+        "state"
+      ]
+    }
+  },
+  {
+    "name": "extract_table",
+    "description": "Parse an HTML <table> into JSON rows. Auto-detects header from <thead>/<th>. Returns array of {col1: val, col2: val, ...}.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "Table selector. Default: first table on page."
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_rows": {
+          "type": "integer",
+          "description": "Default 100."
+        }
+      }
+    }
+  },
+  {
+    "name": "extract_form_data",
+    "description": "Get all form fields with current values, labels, types, validation state. Useful for form auditing or pre-fill detection.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "form_selector": {
+          "type": "string",
+          "description": "Form selector. Default: all forms."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "extract_list",
+    "description": "Extract repeating patterns (cards, posts, products). Specify container + item selector + named field selectors.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "type": "string",
+          "description": "Parent selector."
+        },
+        "item": {
+          "type": "string",
+          "description": "Item selector within container."
+        },
+        "fields": {
+          "type": "object",
+          "description": "Map of {fieldName: selector} relative to item."
+        },
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_items": {
+          "type": "integer",
+          "description": "Default 50."
+        }
+      },
+      "required": [
+        "item"
+      ]
+    }
+  },
+  {
+    "name": "extract_metadata",
+    "description": "Get page metadata: OpenGraph, Twitter cards, JSON-LD, canonical URL, lang, description, favicon.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "extract_contacts",
+    "description": "Find emails, phone numbers, and addresses on the page using regex patterns.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  {
+    "name": "extract_images",
+    "description": "List all images on the page with src, alt, dimensions. Optionally filter by min size.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "min_size": {
+          "type": "integer",
+          "description": "Min width/height in px (default 50)."
+        }
+      }
+    }
+  },
+  {
+    "name": "wait_for_request",
+    "description": "Wait until a network request matching pattern completes. Returns request + response data. Requires CDP attach.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url_contains": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "description": "GET, POST, etc. Default any."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Default 10000."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "url_contains"
+      ]
+    }
+  },
+  {
+    "name": "block_resources",
+    "description": "Block resource types (image, font, media, stylesheet, script, xhr, fetch) for a tab. Speeds up scraping or simulates poor network. Pass empty array to unblock.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resource types to block."
+        },
+        "url_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Or specific URL wildcards."
+        }
+      }
+    }
+  },
+  {
+    "name": "get_visible_text",
+    "description": "Extract ONLY text the user can actually see (excludes hidden/script/style/off-screen). More accurate than get_page text for content extraction.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Default 10000."
+        }
+      }
+    }
+  },
+  {
+    "name": "find_clickable",
+    "description": "List ALL interactive elements (buttons, links, inputs) with their visible label and position. Better than get_page for click planning.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Default 80."
+        }
+      }
+    }
+  },
+  {
+    "name": "pdf_export",
+    "description": "Save current page as PDF. Requires CDP. Returns filename in Downloads folder.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "landscape": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "element_exists",
+    "description": "Quick check whether a selector matches anything. Returns boolean. Faster than find_element.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "count_elements",
+    "description": "Count elements matching selector.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "scroll_to_element",
+    "description": "Smooth-scroll an element into view. Optionally specify alignment (start/center/end).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "block": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "nearest"
+          ],
+          "description": "Default center."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "highlight_element",
+    "description": "Visually flash an element with a colored outline (debug aid). Auto-removes after duration.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string",
+          "description": "CSS color. Default red."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "Default 2000."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    }
+  },
+  {
+    "name": "scroll_through_page",
+    "description": "Auto-scroll from top to bottom in steps to trigger lazy-loaded content (infinite scroll, image lazy load, etc).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "step_px": {
+          "type": "integer",
+          "description": "Pixels per step (default 500)."
+        },
+        "delay_ms": {
+          "type": "integer",
+          "description": "Pause between steps (default 300)."
+        },
+        "max_scrolls": {
+          "type": "integer",
+          "description": "Safety cap (default 30)."
+        }
+      }
+    }
+  },
+  {
+    "name": "retry_with_backoff",
+    "description": "Retry a tool call with exponential backoff on failure. Useful for flaky network calls or eventual-consistency UIs.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "description": "Default 3."
+        },
+        "backoff_ms": {
+          "type": "integer",
+          "description": "Initial delay (default 500). Doubles each attempt."
+        }
+      },
+      "required": [
+        "tool",
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "auth_save",
+    "description": "Snapshot cookies + localStorage + sessionStorage for current tab's domain into a named slot. Restore later with auth_restore to skip login.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Slot name, e.g. \"github_main\"."
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "auth_restore",
+    "description": "Restore a previously saved auth snapshot to current tab's domain. Reload page after to apply.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "auth_list",
+    "description": "List all saved auth snapshots.",
+    "input_schema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "export_data",
+    "description": "Export an array of records to CSV or JSON, attached inline to chat.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "description": "Array of objects."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "json"
+          ],
+          "description": "Default csv."
+        },
+        "filename": {
+          "type": "string",
+          "description": "Default export.csv/json."
+        }
+      },
+      "required": [
+        "data"
+      ]
+    }
+  },
+  {
+    "name": "ai_summarize",
+    "description": "Use Claude to summarize the current page text. Length: short (1 para) | medium (3-4) | long (full breakdown).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "length": {
+          "type": "string",
+          "enum": [
+            "short",
+            "medium",
+            "long"
+          ],
+          "description": "Default medium."
+        }
+      }
+    }
   }
 ]

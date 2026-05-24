@@ -1338,6 +1338,328 @@ export const ALL_TOOLS = [
       required: ['actions'],
     },
   },
+
+  // ===== AI-requested round 4 tools =====
+  {
+    name: 'get_element_info',
+    description: 'All-in-one element inspector. Returns text, value, all attributes, position (rect), visibility, key computed styles, parent path. Replaces multiple get_text/get_value/get_attribute calls.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'smart_click',
+    description: 'Click an element by natural-language description. Tries text match, aria-label, role, placeholder. Use when you don\'t know exact selector. e.g. "login button", "submit form".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'Natural language — what to click.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['description'],
+    },
+  },
+  {
+    name: 'smart_type',
+    description: 'Type into a field identified by label/placeholder/aria-label. e.g. field="email", text="user@x.com" → finds the email input automatically.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        field: { type: 'string', description: 'Field label/placeholder/aria-label keyword.' },
+        text: { type: 'string' },
+        tab_id: { type: 'integer' },
+        press_enter: { type: 'boolean' },
+      },
+      required: ['field', 'text'],
+    },
+  },
+  {
+    name: 'wait_for_navigation',
+    description: 'Wait until the tab navigates to a new URL and finishes loading. Use after clicks that trigger navigation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        url_contains: { type: 'string', description: 'Optional substring to match in new URL.' },
+        timeout_ms: { type: 'integer', description: 'Default 10000.' },
+      },
+    },
+  },
+  {
+    name: 'wait_for_element_state',
+    description: 'Wait until element reaches state: visible, hidden, enabled, disabled, stable (no DOM change for 200ms).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        state: { type: 'string', enum: ['visible', 'hidden', 'enabled', 'disabled', 'stable'] },
+        timeout_ms: { type: 'integer', description: 'Default 5000.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector', 'state'],
+    },
+  },
+  {
+    name: 'extract_table',
+    description: 'Parse an HTML <table> into JSON rows. Auto-detects header from <thead>/<th>. Returns array of {col1: val, col2: val, ...}.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'Table selector. Default: first table on page.' },
+        tab_id: { type: 'integer' },
+        max_rows: { type: 'integer', description: 'Default 100.' },
+      },
+    },
+  },
+  {
+    name: 'extract_form_data',
+    description: 'Get all form fields with current values, labels, types, validation state. Useful for form auditing or pre-fill detection.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        form_selector: { type: 'string', description: 'Form selector. Default: all forms.' },
+        tab_id: { type: 'integer' },
+      },
+    },
+  },
+  {
+    name: 'extract_list',
+    description: 'Extract repeating patterns (cards, posts, products). Specify container + item selector + named field selectors.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        container: { type: 'string', description: 'Parent selector.' },
+        item: { type: 'string', description: 'Item selector within container.' },
+        fields: { type: 'object', description: 'Map of {fieldName: selector} relative to item.' },
+        tab_id: { type: 'integer' },
+        max_items: { type: 'integer', description: 'Default 50.' },
+      },
+      required: ['item'],
+    },
+  },
+  {
+    name: 'extract_metadata',
+    description: 'Get page metadata: OpenGraph, Twitter cards, JSON-LD, canonical URL, lang, description, favicon.',
+    input_schema: {
+      type: 'object',
+      properties: { tab_id: { type: 'integer' } },
+    },
+  },
+  {
+    name: 'extract_contacts',
+    description: 'Find emails, phone numbers, and addresses on the page using regex patterns.',
+    input_schema: {
+      type: 'object',
+      properties: { tab_id: { type: 'integer' } },
+    },
+  },
+  {
+    name: 'extract_images',
+    description: 'List all images on the page with src, alt, dimensions. Optionally filter by min size.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        min_size: { type: 'integer', description: 'Min width/height in px (default 50).' },
+      },
+    },
+  },
+  {
+    name: 'wait_for_request',
+    description: 'Wait until a network request matching pattern completes. Returns request + response data. Requires CDP attach.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url_contains: { type: 'string' },
+        method: { type: 'string', description: 'GET, POST, etc. Default any.' },
+        timeout_ms: { type: 'integer', description: 'Default 10000.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['url_contains'],
+    },
+  },
+  {
+    name: 'block_resources',
+    description: 'Block resource types (image, font, media, stylesheet, script, xhr, fetch) for a tab. Speeds up scraping or simulates poor network. Pass empty array to unblock.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        types: { type: 'array', items: { type: 'string' }, description: 'Resource types to block.' },
+        url_patterns: { type: 'array', items: { type: 'string' }, description: 'Or specific URL wildcards.' },
+      },
+    },
+  },
+  {
+    name: 'get_visible_text',
+    description: 'Extract ONLY text the user can actually see (excludes hidden/script/style/off-screen). More accurate than get_page text for content extraction.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        max_chars: { type: 'integer', description: 'Default 10000.' },
+      },
+    },
+  },
+  {
+    name: 'find_clickable',
+    description: 'List ALL interactive elements (buttons, links, inputs) with their visible label and position. Better than get_page for click planning.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        limit: { type: 'integer', description: 'Default 80.' },
+      },
+    },
+  },
+  {
+    name: 'pdf_export',
+    description: 'Save current page as PDF. Requires CDP. Returns filename in Downloads folder.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        filename: { type: 'string' },
+        landscape: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'element_exists',
+    description: 'Quick check whether a selector matches anything. Returns boolean. Faster than find_element.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'count_elements',
+    description: 'Count elements matching selector.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'scroll_to_element',
+    description: 'Smooth-scroll an element into view. Optionally specify alignment (start/center/end).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        block: { type: 'string', enum: ['start', 'center', 'end', 'nearest'], description: 'Default center.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'highlight_element',
+    description: 'Visually flash an element with a colored outline (debug aid). Auto-removes after duration.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' },
+        color: { type: 'string', description: 'CSS color. Default red.' },
+        duration_ms: { type: 'integer', description: 'Default 2000.' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'scroll_through_page',
+    description: 'Auto-scroll from top to bottom in steps to trigger lazy-loaded content (infinite scroll, image lazy load, etc).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        step_px: { type: 'integer', description: 'Pixels per step (default 500).' },
+        delay_ms: { type: 'integer', description: 'Pause between steps (default 300).' },
+        max_scrolls: { type: 'integer', description: 'Safety cap (default 30).' },
+      },
+    },
+  },
+  {
+    name: 'retry_with_backoff',
+    description: 'Retry a tool call with exponential backoff on failure. Useful for flaky network calls or eventual-consistency UIs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string' },
+        input: { type: 'object' },
+        max_attempts: { type: 'integer', description: 'Default 3.' },
+        backoff_ms: { type: 'integer', description: 'Initial delay (default 500). Doubles each attempt.' },
+      },
+      required: ['tool', 'input'],
+    },
+  },
+  {
+    name: 'auth_save',
+    description: 'Snapshot cookies + localStorage + sessionStorage for current tab\'s domain into a named slot. Restore later with auth_restore to skip login.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Slot name, e.g. "github_main".' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'auth_restore',
+    description: 'Restore a previously saved auth snapshot to current tab\'s domain. Reload page after to apply.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        tab_id: { type: 'integer' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'auth_list',
+    description: 'List all saved auth snapshots.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'export_data',
+    description: 'Export an array of records to CSV or JSON, attached inline to chat.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        data: { type: 'array', description: 'Array of objects.' },
+        format: { type: 'string', enum: ['csv', 'json'], description: 'Default csv.' },
+        filename: { type: 'string', description: 'Default export.csv/json.' },
+      },
+      required: ['data'],
+    },
+  },
+  {
+    name: 'ai_summarize',
+    description: 'Use Claude to summarize the current page text. Length: short (1 para) | medium (3-4) | long (full breakdown).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        length: { type: 'string', enum: ['short', 'medium', 'long'], description: 'Default medium.' },
+      },
+    },
+  },
 ];
 
 // Tools that should require approval in 'destructive' mode.
@@ -1503,6 +1825,33 @@ export async function executeTool(name, input, ctx = {}) {
     switch (name) {
       case 'health_check':       return wrap(await tool_healthCheck(input || {}));
       case 'conditional_action': return wrap(await tool_conditionalAction(input || {}, ctx));
+      case 'get_element_info': return wrap(await tool_getElementInfo(input || {}));
+      case 'smart_click':      return wrap(await tool_smartClick(input || {}, ctx));
+      case 'smart_type':       return wrap(await tool_smartType(input || {}, ctx));
+      case 'wait_for_navigation': return wrap(await tool_waitForNavigation(input || {}));
+      case 'wait_for_element_state': return wrap(await tool_waitForElementState(input || {}));
+      case 'extract_table':    return wrap(await tool_extractTable(input || {}));
+      case 'extract_form_data':return wrap(await tool_extractFormData(input || {}));
+      case 'extract_list':     return wrap(await tool_extractList(input || {}));
+      case 'extract_metadata': return wrap(await tool_extractMetadata(input || {}));
+      case 'extract_contacts': return wrap(await tool_extractContacts(input || {}));
+      case 'extract_images':   return wrap(await tool_extractImages(input || {}));
+      case 'wait_for_request': return wrap(await tool_waitForRequest(input || {}));
+      case 'block_resources':  return wrap(await tool_blockResources(input || {}));
+      case 'get_visible_text': return wrap(await tool_getVisibleText(input || {}));
+      case 'find_clickable':   return wrap(await tool_findClickable(input || {}));
+      case 'pdf_export':       return wrap(await tool_pdfExport(input || {}));
+      case 'element_exists':   return wrap(await tool_elementExists(input || {}));
+      case 'count_elements':   return wrap(await tool_countElements(input || {}));
+      case 'scroll_to_element':return wrap(await tool_scrollToElement(input || {}));
+      case 'highlight_element':return wrap(await tool_highlightElement(input || {}));
+      case 'scroll_through_page': return wrap(await tool_scrollThroughPage(input || {}));
+      case 'retry_with_backoff':return wrap(await tool_retryWithBackoff(input || {}, ctx));
+      case 'auth_save':        return wrap(await tool_authSave(input || {}));
+      case 'auth_restore':     return wrap(await tool_authRestore(input || {}));
+      case 'auth_list':        return wrap(await tool_authList());
+      case 'export_data':      return wrap(await tool_exportData(input || {}));
+      case 'ai_summarize':     return wrap(await tool_aiSummarize(input || {}));
       case 'get_page':       return wrap(await tool_getPage(input || {}));
       case 'read_tab':       return wrap(await tool_getPage({ ...input, tab_id: input?.tab_id }));
       case 'find_element':   return wrap(await tool_findElement(input || {}));
@@ -5504,4 +5853,584 @@ async function tool_conditionalAction({ actions }, ctx) {
     lines.push(`  #${t.idx + 1} ${t.tool}(${t.input_summary}) → ${t.content || t.error}`);
   }
   return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: lines.join('\n') };
+}
+
+// =====================================================================
+// ROUND 4 — AI WISHLIST IMPLEMENTATIONS
+// =====================================================================
+
+// Helper: resolve selector → element in page (handles #ref-N)
+const _resolveSelector = (sel) => {
+  const m = sel.match(/^#ref-(\d+)$/);
+  if (m && window.__claudeRefs__) {
+    const el = window.__claudeRefs__[parseInt(m[1], 10)];
+    if (el?.isConnected) return el;
+  }
+  try { return document.querySelector(sel); } catch { return null; }
+};
+
+// ---- get_element_info -----------------------------------------------
+async function tool_getElementInfo({ selector, tab_id }) {
+  if (!selector) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (sel) => {
+    const m = sel.match(/^#ref-(\d+)$/);
+    let el = m && window.__claudeRefs__ ? window.__claudeRefs__[parseInt(m[1], 10)] : null;
+    if (!el?.isConnected) { try { el = document.querySelector(sel); } catch {} }
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const attrs = {};
+    for (const a of el.attributes) attrs[a.name] = a.value;
+    let path = []; let cur = el;
+    while (cur && cur !== document.body && path.length < 6) {
+      let p = cur.tagName.toLowerCase();
+      if (cur.id) p += '#' + cur.id;
+      else if (cur.className && typeof cur.className === 'string') {
+        const c = cur.className.split(/\s+/).filter(Boolean)[0];
+        if (c) p += '.' + c;
+      }
+      path.unshift(p); cur = cur.parentElement;
+    }
+    return {
+      tag: el.tagName.toLowerCase(),
+      text: (el.innerText || el.textContent || '').slice(0, 500).trim(),
+      value: el.value !== undefined ? el.value : null,
+      attributes: attrs,
+      position: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+      visible: rect.width > 0 && rect.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0',
+      computed: {
+        display: cs.display, color: cs.color, background: cs.backgroundColor,
+        font_size: cs.fontSize, cursor: cs.cursor, z_index: cs.zIndex,
+      },
+      parent_path: path.join(' > '),
+    };
+  }, [selector]);
+  if (!r) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `No element matched: ${selector}` };
+  return { content: JSON.stringify(r, null, 2) };
+}
+
+// ---- smart_click ----------------------------------------------------
+async function tool_smartClick({ description, tab_id }, ctx) {
+  if (!description) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'description required.' };
+  const find = await tool_findByText({ text: description, tab_id });
+  if (!find.is_error) {
+    const m = (find.content || '').match(/#ref-(\d+)/);
+    if (m) return await tool_click({ selector: '#ref-' + m[1], tab_id });
+  }
+  // Fallback: aria-label / role-based
+  const tab = await resolveTab(tab_id);
+  const fallback = await execIsolated(tab.id, (desc) => {
+    const lower = desc.toLowerCase();
+    const els = [...document.querySelectorAll('button, a, [role=button], input[type=submit], input[type=button], [role=link]')];
+    const match = els.find(e => {
+      const text = ((e.innerText || e.textContent || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('placeholder') || '') + ' ' + (e.getAttribute('title') || '') + ' ' + (e.value || '')).toLowerCase();
+      return text.includes(lower);
+    });
+    if (!match) return null;
+    window.__claudeRefs__ = window.__claudeRefs__ || {};
+    const id = Object.keys(window.__claudeRefs__).length + 1;
+    window.__claudeRefs__[id] = match;
+    return { ref: id, label: (match.innerText || match.value || '').slice(0, 60) };
+  }, [description]);
+  if (!fallback) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `Couldn't find element matching "${description}".` };
+  return await tool_click({ selector: '#ref-' + fallback.ref, tab_id });
+}
+
+// ---- smart_type -----------------------------------------------------
+async function tool_smartType({ field, text, tab_id, press_enter }, ctx) {
+  if (!field) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'field required.' };
+  const tab = await resolveTab(tab_id);
+  const found = await execIsolated(tab.id, (f) => {
+    const lower = f.toLowerCase();
+    const inputs = [...document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, [contenteditable=""], [contenteditable=true]')];
+    const match = inputs.find(e => {
+      const tokens = [
+        e.getAttribute('aria-label'),
+        e.getAttribute('placeholder'),
+        e.getAttribute('name'),
+        e.getAttribute('id'),
+        e.getAttribute('type'),
+        e.labels && e.labels[0] ? e.labels[0].innerText : '',
+      ].filter(Boolean).join(' ').toLowerCase();
+      return tokens.includes(lower);
+    });
+    if (!match) return null;
+    window.__claudeRefs__ = window.__claudeRefs__ || {};
+    const id = Object.keys(window.__claudeRefs__).length + 1;
+    window.__claudeRefs__[id] = match;
+    return { ref: id };
+  }, [field]);
+  if (!found) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `No field matching "${field}".` };
+  return await tool_type({ selector: '#ref-' + found.ref, text, press_enter, tab_id });
+}
+
+// ---- wait_for_navigation --------------------------------------------
+async function tool_waitForNavigation({ tab_id, url_contains, timeout_ms = 10000 }) {
+  const tab = await resolveTab(tab_id);
+  const startUrl = tab.url;
+  const deadline = Date.now() + timeout_ms;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 200));
+    const cur = await chrome.tabs.get(tab.id);
+    const navigated = cur.url !== startUrl && cur.status === 'complete';
+    const matchUrl = !url_contains || cur.url.includes(url_contains);
+    if (navigated && matchUrl) return { content: `✓ Navigated: ${startUrl} → ${cur.url}` };
+  }
+  return { is_error: true, error_code: ERR_CODES.TIMEOUT, content: `Navigation didn't complete${url_contains ? ' to ' + url_contains : ''} within ${timeout_ms}ms.` };
+}
+
+// ---- wait_for_element_state -----------------------------------------
+async function tool_waitForElementState({ selector, state, timeout_ms = 5000, tab_id }) {
+  if (!selector || !state) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector and state required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, async (sel, st, to) => {
+    const start = Date.now();
+    let lastSnapshot = '';
+    while (Date.now() - start < to) {
+      const el = (sel.match(/^#ref-(\d+)$/) && window.__claudeRefs__) ? window.__claudeRefs__[parseInt(sel.match(/^#ref-(\d+)$/)[1])] : document.querySelector(sel);
+      if (st === 'hidden' && !el) return { ok: true };
+      if (el) {
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        const visible = r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
+        if (st === 'visible' && visible) return { ok: true };
+        if (st === 'hidden' && !visible) return { ok: true };
+        if (st === 'enabled' && !el.disabled) return { ok: true };
+        if (st === 'disabled' && el.disabled) return { ok: true };
+        if (st === 'stable') {
+          const snap = el.outerHTML.slice(0, 500);
+          if (snap === lastSnapshot) return { ok: true };
+          lastSnapshot = snap;
+        }
+      }
+      await new Promise(r => setTimeout(r, 150));
+    }
+    return { ok: false };
+  }, [selector, state, timeout_ms]);
+  if (r?.ok) return { content: `✓ ${selector} reached state: ${state}` };
+  return { is_error: true, error_code: ERR_CODES.TIMEOUT, content: `${selector} did not reach state "${state}" within ${timeout_ms}ms.` };
+}
+
+// ---- extract_table --------------------------------------------------
+async function tool_extractTable({ selector, tab_id, max_rows = 100 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (sel, max) => {
+    const table = sel ? document.querySelector(sel) : document.querySelector('table');
+    if (!table) return null;
+    const rows = [...table.querySelectorAll('tr')];
+    if (!rows.length) return [];
+    const headers = [...rows[0].querySelectorAll('th, td')].map(c => (c.innerText || '').trim() || `col${0}`);
+    const out = [];
+    for (let i = 1; i < rows.length && out.length < max; i++) {
+      const cells = [...rows[i].querySelectorAll('td, th')];
+      const row = {};
+      cells.forEach((c, j) => row[headers[j] || `col${j}`] = (c.innerText || '').trim());
+      out.push(row);
+    }
+    return out;
+  }, [selector || '', max_rows]);
+  if (!r) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: 'No table found.' };
+  return { content: `Extracted ${r.length} row(s):\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
+}
+
+// ---- extract_form_data ----------------------------------------------
+async function tool_extractFormData({ form_selector, tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (sel) => {
+    const forms = sel ? document.querySelectorAll(sel) : document.querySelectorAll('form');
+    return [...forms].map((f, fi) => ({
+      form_index: fi,
+      action: f.action || null,
+      method: f.method || 'get',
+      fields: [...f.querySelectorAll('input, textarea, select')].map(i => ({
+        name: i.name || null,
+        type: i.type || i.tagName.toLowerCase(),
+        value: i.type === 'password' ? '***' : (i.value || ''),
+        label: i.labels?.[0]?.innerText?.trim() || i.getAttribute('aria-label') || i.getAttribute('placeholder') || null,
+        required: i.required || false,
+        readonly: i.readOnly || false,
+      })),
+    }));
+  }, [form_selector || '']);
+  if (!r?.length) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: 'No forms found.' };
+  return { content: `Found ${r.length} form(s):\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
+}
+
+// ---- extract_list ---------------------------------------------------
+async function tool_extractList({ container, item, fields, tab_id, max_items = 50 }) {
+  if (!item) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'item selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (cont, it, flds, max) => {
+    const root = cont ? document.querySelector(cont) : document;
+    if (!root) return null;
+    const items = [...root.querySelectorAll(it)].slice(0, max);
+    return items.map(el => {
+      if (!flds || !Object.keys(flds).length) return { text: (el.innerText || '').slice(0, 200).trim() };
+      const obj = {};
+      for (const [k, sel] of Object.entries(flds)) {
+        const child = el.querySelector(sel);
+        obj[k] = child ? (child.innerText || child.getAttribute('href') || child.getAttribute('src') || '').trim() : null;
+      }
+      return obj;
+    });
+  }, [container || '', item, fields || {}, max_items]);
+  if (!r) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: 'Container not found.' };
+  return { content: `Extracted ${r.length} item(s):\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
+}
+
+// ---- extract_metadata -----------------------------------------------
+async function tool_extractMetadata({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, () => {
+    const m = (sel, attr = 'content') => document.querySelector(sel)?.getAttribute(attr);
+    const og = {}, tw = {};
+    for (const e of document.querySelectorAll('meta[property^="og:"]')) og[e.getAttribute('property').slice(3)] = e.getAttribute('content');
+    for (const e of document.querySelectorAll('meta[name^="twitter:"]')) tw[e.getAttribute('name').slice(8)] = e.getAttribute('content');
+    const json_ld = [...document.querySelectorAll('script[type="application/ld+json"]')].map(s => { try { return JSON.parse(s.textContent); } catch { return null; } }).filter(Boolean);
+    return {
+      title: document.title,
+      description: m('meta[name=description]'),
+      canonical: m('link[rel=canonical]', 'href'),
+      lang: document.documentElement.lang || null,
+      favicon: m('link[rel~=icon]', 'href'),
+      og, twitter: tw, json_ld,
+    };
+  });
+  return { content: '```json\n' + JSON.stringify(r, null, 2) + '\n```' };
+}
+
+// ---- extract_contacts -----------------------------------------------
+async function tool_extractContacts({ tab_id }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, () => {
+    const text = document.body?.innerText || '';
+    const emails = [...new Set(text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])];
+    const phones = [...new Set(text.match(/\+?[\d\s().-]{8,20}\d/g) || [])].filter(p => p.replace(/\D/g, '').length >= 8);
+    return { emails, phones };
+  });
+  return { content: `Emails: ${r.emails.length}, Phones: ${r.phones.length}\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
+}
+
+// ---- extract_images -------------------------------------------------
+async function tool_extractImages({ tab_id, min_size = 50 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (min) => {
+    return [...document.querySelectorAll('img')]
+      .filter(i => i.naturalWidth >= min || i.naturalHeight >= min || i.width >= min || i.height >= min)
+      .slice(0, 100)
+      .map(i => ({
+        src: i.src, alt: i.alt || '',
+        width: i.naturalWidth || i.width, height: i.naturalHeight || i.height,
+      }));
+  }, [min_size]);
+  return { content: `Found ${r.length} image(s) ≥ ${min_size}px:\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
+}
+
+// ---- wait_for_request -----------------------------------------------
+async function tool_waitForRequest({ url_contains, method, timeout_ms = 10000, tab_id }) {
+  if (!url_contains) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'url_contains required.' };
+  const tab = await resolveTab(tab_id);
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: `CDP attach failed: ${e.message}` }; }
+
+  return await new Promise((resolve) => {
+    let done = false;
+    const requests = new Map();
+    const handler = (src, m, p) => {
+      if (src.tabId !== tab.id || done) return;
+      if (m === 'Network.requestWillBeSent' && p.request.url.includes(url_contains)) {
+        if (method && p.request.method !== method) return;
+        requests.set(p.requestId, p.request);
+      }
+      if (m === 'Network.responseReceived' && requests.has(p.requestId)) {
+        done = true;
+        chrome.debugger.onEvent.removeListener(handler);
+        if (attached) { try { chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+        resolve({ content: `✓ Caught ${p.response.url} → HTTP ${p.response.status}\n\`\`\`json\n${JSON.stringify({ request: requests.get(p.requestId), response: { status: p.response.status, mimeType: p.response.mimeType } }, null, 2)}\n\`\`\`` });
+      }
+    };
+    chrome.debugger.onEvent.addListener(handler);
+    chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable').catch(() => {});
+    setTimeout(() => {
+      if (done) return;
+      done = true;
+      chrome.debugger.onEvent.removeListener(handler);
+      if (attached) { try { chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+      resolve({ is_error: true, error_code: ERR_CODES.TIMEOUT, content: `No request matching "${url_contains}" within ${timeout_ms}ms.` });
+    }, timeout_ms);
+  });
+}
+
+// ---- block_resources ------------------------------------------------
+async function tool_blockResources({ tab_id, types = [], url_patterns = [] }) {
+  const tab = await resolveTab(tab_id);
+  if (!types.length && !url_patterns.length) {
+    try { await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.setBlockedURLs', { urls: [] }); } catch {}
+    try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+    return { content: '✓ Resource blocking cleared.' };
+  }
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); } catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: e.message }; }
+  await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable').catch(() => {});
+  const typeUrls = { image: '*.png|*.jpg|*.jpeg|*.gif|*.webp', font: '*.woff|*.woff2|*.ttf', media: '*.mp4|*.webm|*.mp3', stylesheet: '*.css', script: '*.js' };
+  const urls = [];
+  for (const t of types) if (typeUrls[t]) urls.push(...typeUrls[t].split('|'));
+  urls.push(...url_patterns);
+  await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.setBlockedURLs', { urls });
+  return { content: `✓ Blocking ${urls.length} pattern(s) on tab ${tab.id}: ${urls.slice(0, 5).join(', ')}${urls.length > 5 ? '…' : ''}` };
+}
+
+// ---- get_visible_text -----------------------------------------------
+async function tool_getVisibleText({ tab_id, max_chars = 10000 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (max) => {
+    const text = document.body?.innerText || '';
+    return { text: text.slice(0, max), total: text.length };
+  }, [max_chars]);
+  const trunc = r.total > max_chars ? `\n\n[⚠ TRUNCATED: ${r.total} of ${max_chars} chars shown]` : '';
+  return { content: r.text + trunc };
+}
+
+// ---- find_clickable -------------------------------------------------
+async function tool_findClickable({ tab_id, limit = 80 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, (lim) => {
+    window.__claudeRefs__ = window.__claudeRefs__ || {};
+    let id = Object.keys(window.__claudeRefs__).length;
+    const sel = 'a[href], button, input:not([type=hidden]), [role=button], [role=link], [onclick]';
+    const items = [];
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      id++;
+      window.__claudeRefs__[id] = el;
+      items.push({
+        ref: id, tag: el.tagName.toLowerCase(),
+        type: el.type || el.getAttribute('role') || 'click',
+        label: ((el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 80) || '(unnamed)').replace(/\s+/g, ' ').trim(),
+        position: { x: Math.round(r.x), y: Math.round(r.y) },
+      });
+      if (items.length >= lim) break;
+    }
+    return items;
+  }, [limit]);
+  const lines = [`${r.length} clickable element(s):`];
+  for (const i of r) lines.push(`  #ref-${i.ref}  [${i.tag}/${i.type}]  ${i.label}  @(${i.position.x},${i.position.y})`);
+  return { content: lines.join('\n') };
+}
+
+// ---- pdf_export -----------------------------------------------------
+async function tool_pdfExport({ tab_id, filename = 'page.pdf', landscape = false }) {
+  const tab = await resolveTab(tab_id);
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!e.message.includes('already attached')) return { is_error: true, content: e.message }; }
+  try {
+    const r = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.printToPDF', { landscape, printBackground: true });
+    const dataUrl = `data:application/pdf;base64,${r.data}`;
+    const id = await chrome.downloads.download({ url: dataUrl, filename });
+    return { content: `✓ Saved as PDF: ${filename} (download id=${id}, ${formatBytes(Math.floor(r.data.length * 3 / 4))})` };
+  } catch (e) {
+    return { is_error: true, content: `pdf_export failed: ${e.message}` };
+  } finally {
+    if (attached) { try { await chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+  }
+}
+
+// ---- element_exists / count_elements --------------------------------
+async function tool_elementExists({ selector, tab_id }) {
+  if (!selector) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const exists = await execIsolated(tab.id, (s) => {
+    const m = s.match(/^#ref-(\d+)$/);
+    if (m && window.__claudeRefs__) return !!window.__claudeRefs__[parseInt(m[1])]?.isConnected;
+    try { return !!document.querySelector(s); } catch { return false; }
+  }, [selector]);
+  return { content: `${selector}: ${exists ? 'exists' : 'NOT FOUND'}` };
+}
+
+async function tool_countElements({ selector, tab_id }) {
+  if (!selector) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const n = await execIsolated(tab.id, (s) => { try { return document.querySelectorAll(s).length; } catch { return -1; } }, [selector]);
+  if (n < 0) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: `Invalid selector: ${selector}` };
+  return { content: `${selector}: ${n} element(s)` };
+}
+
+// ---- scroll_to_element / highlight_element / scroll_through_page ----
+async function tool_scrollToElement({ selector, block = 'center', tab_id }) {
+  if (!selector) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const ok = await execIsolated(tab.id, (s, b) => {
+    const m = s.match(/^#ref-(\d+)$/);
+    const el = m && window.__claudeRefs__ ? window.__claudeRefs__[parseInt(m[1])] : document.querySelector(s);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: 'smooth', block: b });
+    return true;
+  }, [selector, block]);
+  if (!ok) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `Element not found: ${selector}` };
+  await new Promise(r => setTimeout(r, 400));
+  return { content: `✓ Scrolled to ${selector} (block=${block})` };
+}
+
+async function tool_highlightElement({ selector, color = 'red', duration_ms = 2000, tab_id }) {
+  if (!selector) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'selector required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const ok = await execIsolated(tab.id, (s, c, d) => {
+    const m = s.match(/^#ref-(\d+)$/);
+    const el = m && window.__claudeRefs__ ? window.__claudeRefs__[parseInt(m[1])] : document.querySelector(s);
+    if (!el) return false;
+    const orig = el.style.outline;
+    el.style.outline = `3px solid ${c}`;
+    el.style.outlineOffset = '2px';
+    setTimeout(() => { el.style.outline = orig; el.style.outlineOffset = ''; }, d);
+    return true;
+  }, [selector, color, duration_ms]);
+  if (!ok) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: 'Element not found.' };
+  return { content: `✓ Highlighted ${selector} (${color}, ${duration_ms}ms)` };
+}
+
+async function tool_scrollThroughPage({ tab_id, step_px = 500, delay_ms = 300, max_scrolls = 30 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const r = await execIsolated(tab.id, async (step, delay, max) => {
+    let lastH = 0; let scrolls = 0;
+    for (let i = 0; i < max; i++) {
+      window.scrollBy(0, step);
+      await new Promise(r => setTimeout(r, delay));
+      scrolls++;
+      const h = document.documentElement.scrollHeight;
+      if (h === lastH && window.scrollY + window.innerHeight >= h - 5) break;
+      lastH = h;
+    }
+    return { scrolls, final_height: lastH, position: window.scrollY };
+  }, [step_px, delay_ms, max_scrolls]);
+  return { content: `✓ Scrolled ${r.scrolls} time(s). Page height: ${r.final_height}px, position: ${r.position}px` };
+}
+
+// ---- retry_with_backoff ---------------------------------------------
+async function tool_retryWithBackoff({ tool, input, max_attempts = 3, backoff_ms = 500 }, ctx) {
+  if (!tool) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'tool required.' };
+  let last;
+  for (let i = 0; i < max_attempts; i++) {
+    last = await executeTool(tool, input || {}, ctx);
+    if (!last.is_error) return { content: `✓ Succeeded on attempt ${i + 1}/${max_attempts}\n${last.content}` };
+    if (i < max_attempts - 1) await new Promise(r => setTimeout(r, backoff_ms * Math.pow(2, i)));
+  }
+  return { is_error: true, error_code: last?.error_code || ERR_CODES.EXEC_FAILED,
+           content: `All ${max_attempts} attempts failed. Last error: ${last?.content}` };
+}
+
+// ---- auth save/restore/list -----------------------------------------
+const _AUTH_KEY = 'mb_auth_states';
+
+async function tool_authSave({ name, tab_id }) {
+  if (!name) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'name required.' };
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const url = new URL(tab.url);
+  const cookies = await chrome.cookies.getAll({ url: tab.url });
+  const storage = await execIsolated(tab.id, () => ({
+    local: Object.fromEntries(Object.entries(localStorage)),
+    session: Object.fromEntries(Object.entries(sessionStorage)),
+  }));
+  const { [_AUTH_KEY]: existing = {} } = await chrome.storage.local.get([_AUTH_KEY]);
+  existing[name] = { domain: url.hostname, url: tab.url, cookies, storage, saved_at: Date.now() };
+  await chrome.storage.local.set({ [_AUTH_KEY]: existing });
+  return { content: `✓ Saved auth "${name}": ${cookies.length} cookies, ${Object.keys(storage.local).length} localStorage entries.` };
+}
+
+async function tool_authRestore({ name, tab_id }) {
+  if (!name) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'name required.' };
+  const tab = await resolveTab(tab_id);
+  const { [_AUTH_KEY]: existing = {} } = await chrome.storage.local.get([_AUTH_KEY]);
+  const snap = existing[name];
+  if (!snap) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: `No auth slot named "${name}".` };
+  let restored = 0;
+  for (const c of snap.cookies) {
+    try {
+      await chrome.cookies.set({
+        url: tab.url, name: c.name, value: c.value, domain: c.domain, path: c.path,
+        secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
+        expirationDate: c.expirationDate,
+      });
+      restored++;
+    } catch {}
+  }
+  await execIsolated(tab.id, (s) => {
+    for (const [k, v] of Object.entries(s.local)) localStorage.setItem(k, v);
+    for (const [k, v] of Object.entries(s.session)) sessionStorage.setItem(k, v);
+  }, [snap.storage]);
+  return { content: `✓ Restored "${name}": ${restored}/${snap.cookies.length} cookies, storage applied. Reload page to apply.` };
+}
+
+async function tool_authList() {
+  const { [_AUTH_KEY]: existing = {} } = await chrome.storage.local.get([_AUTH_KEY]);
+  const items = Object.entries(existing);
+  if (!items.length) return { content: '(no saved auth states)' };
+  const lines = [`${items.length} saved auth state(s):`];
+  for (const [name, s] of items) {
+    const ago = Math.round((Date.now() - s.saved_at) / 60000);
+    lines.push(`  • ${name}  domain=${s.domain}  cookies=${s.cookies.length}  ${ago}m ago`);
+  }
+  return { content: lines.join('\n') };
+}
+
+// ---- export_data ----------------------------------------------------
+async function tool_exportData({ data, format = 'csv', filename }) {
+  if (!Array.isArray(data) || !data.length) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'data must be non-empty array.' };
+  const fname = filename || (format === 'json' ? 'export.json' : 'export.csv');
+  let content;
+  if (format === 'json') {
+    content = JSON.stringify(data, null, 2);
+  } else {
+    const cols = [...new Set(data.flatMap(r => Object.keys(r)))];
+    const esc = (v) => { const s = String(v ?? ''); return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    content = cols.join(',') + '\n' + data.map(r => cols.map(c => esc(r[c])).join(',')).join('\n');
+  }
+  return await tool_attachFile({ filename: fname, content, mime_type: format === 'json' ? 'application/json' : 'text/csv', caption: `${data.length} rows exported as ${format.toUpperCase()}` });
+}
+
+// ---- ai_summarize ---------------------------------------------------
+async function tool_aiSummarize({ tab_id, length = 'medium' }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  const text = await execIsolated(tab.id, () => (document.body?.innerText || '').slice(0, 30000));
+  if (!text) return { is_error: true, content: 'No text to summarize.' };
+  const { settings } = await chrome.storage.local.get(['settings']);
+  if (!settings?.apiToken) return { is_error: true, content: 'No API key set.' };
+  const baseUrl = (settings.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
+  const lengthInstr = { short: 'in 1 paragraph', medium: 'in 3-4 paragraphs', long: 'with full breakdown including all main sections' }[length] || 'in 3-4 paragraphs';
+  try {
+    const resp = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': settings.apiToken, 'Authorization': `Bearer ${settings.apiToken}`, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: settings.defaultModel || 'claude-sonnet-4-5',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: `Summarize this page ${lengthInstr}. Match the language of the source text.\n\n---\n${text}` }],
+      }),
+    });
+    if (!resp.ok) return { is_error: true, content: `Summarize HTTP ${resp.status}` };
+    const j = await resp.json();
+    const out = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+    return { content: out || '(empty)' };
+  } catch (e) {
+    return { is_error: true, content: `Summarize error: ${e.message}` };
+  }
 }
