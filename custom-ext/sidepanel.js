@@ -828,25 +828,50 @@ function appendError(text) {
   scrollToBottom();
 }
 
-// Single live-streaming thinking block per turn (not per iteration)
+// Compact single-line ticker — replaces bulky thinking block.
+// Shows: last line of thinking, OR current tool action.
+// Click to expand and see full thinking history.
 function createThinkingStream() {
   ensureNoEmpty();
   const wrap = document.createElement('div');
-  wrap.className = 'thinking-block thinking-stream open';
-  const toggle = document.createElement('span');
-  toggle.className = 'thinking-toggle';
-  toggle.textContent = '▾ Thinking';
-  const body = document.createElement('div');
-  body.className = 'thinking-body';
-  toggle.addEventListener('click', () => {
-    wrap.classList.toggle('open');
-    toggle.textContent = wrap.classList.contains('open') ? '▾ Thinking' : '▸ Thinking';
+  wrap.className = 'ticker';
+  const icon = document.createElement('span');
+  icon.className = 'ticker-icon';
+  icon.textContent = '✦';
+  const line = document.createElement('span');
+  line.className = 'ticker-line';
+  line.textContent = 'Thinking…';
+  const expand = document.createElement('div');
+  expand.className = 'ticker-expand';
+  wrap.appendChild(icon);
+  wrap.appendChild(line);
+  wrap.appendChild(expand);
+  wrap.title = 'Click to expand';
+  wrap.addEventListener('click', () => {
+    wrap.classList.toggle('expanded');
   });
-  wrap.appendChild(toggle);
-  wrap.appendChild(body);
   messagesEl.appendChild(wrap);
   scrollToBottom();
-  return { wrap, body, toggle };
+  return {
+    wrap,
+    body: expand,        // full history shown when expanded
+    line,                // single-line current display
+    toggle: { textContent: '' },  // backcompat shim
+    icon,
+  };
+}
+
+// Update the ticker line with current activity. Mode: 'thinking' | 'action' | 'idle'.
+function setTickerLine(stream, text, mode = 'thinking') {
+  if (!stream) return;
+  // Take only the LAST line of any multi-line text — keeps ticker single-row
+  const lastLine = String(text).trim().split('\n').filter(Boolean).pop() || '';
+  // Truncate visually with ellipsis (CSS handles it, but keep DOM clean)
+  stream.line.textContent = lastLine || (mode === 'action' ? 'Working…' : 'Thinking…');
+  stream.wrap.dataset.mode = mode;
+  if (mode === 'action') stream.icon.textContent = '⚡';
+  else if (mode === 'idle') stream.icon.textContent = '✓';
+  else stream.icon.textContent = '✦';
 }
 
 function appendIterMarker(n) {
@@ -1492,13 +1517,18 @@ async function runAgentTurn(continuingExisting = false) {
       } else if (ev.kind === 'thinking_delta') {
         if (!thinkStream) thinkStream = createThinkingStream();
         thinkBuf += ev.text;
+        // Single-line live ticker — shows current sentence being thought
+        setTickerLine(thinkStream, thinkBuf, 'thinking');
+        // Also update expanded body so click-to-expand shows full history
         thinkStream.body.textContent = thinkBuf;
-        // auto-scroll thinking body to bottom (live stream feel)
         thinkStream.body.scrollTop = thinkStream.body.scrollHeight;
         scrollToBottom();
       } else if (ev.kind === 'tool_call_start') {
+        // Update ticker to show current tool action
+        if (thinkStream) {
+          setTickerLine(thinkStream, statusForTool(ev.name), 'action');
+        }
         hideStatus();
-        showStatus(statusForTool(ev.name));
         const card = createToolCard(ev.name);
         toolCards.set(ev.id, card);
       } else if (ev.kind === 'tool_call_complete') {
@@ -1523,10 +1553,10 @@ async function runAgentTurn(continuingExisting = false) {
       const captured = lastTextBufRef.value;
       attachAssistantActions(assistantUI.wrap, () => captured);
     }
-    // Auto-collapse thinking stream when turn finishes
-    if (thinkStream && thinkBuf) {
-      thinkStream.wrap.classList.remove('open');
-      thinkStream.toggle.textContent = '▸ Thinking';
+    // Mark ticker as done — fades to a subtle "✓ Done" line that can collapse on next turn
+    if (thinkStream) {
+      setTickerLine(thinkStream, 'Done', 'idle');
+      thinkStream.wrap.classList.add('done');
     }
   } catch (e) {
     appendError(`Unexpected: ${e.message}`);

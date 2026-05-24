@@ -827,6 +827,104 @@ body {
   scroll-behavior: smooth;
 }
 
+/* =====================================================================
+   Compact live ticker — replaces bulky thinking block.
+   Shows the model's current thought / action on a single line that
+   updates in place. Click to expand and see full thinking history.
+   ===================================================================== */
+.ticker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 33px;
+  margin-right: 12px;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  background: rgba(217, 119, 87, 0.04);
+  border: 1px solid rgba(217, 119, 87, 0.16);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+  max-width: calc(100% - 45px);
+  overflow: hidden;
+}
+.ticker:hover {
+  background: rgba(217, 119, 87, 0.07);
+  border-color: rgba(217, 119, 87, 0.28);
+}
+.ticker-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+}
+.ticker[data-mode="thinking"] .ticker-icon {
+  animation: ticker-spin 2.4s linear infinite;
+}
+.ticker[data-mode="action"] .ticker-icon {
+  animation: ticker-pulse 0.9s ease-in-out infinite;
+}
+.ticker.done .ticker-icon {
+  color: rgba(74, 222, 128, 0.7);
+  animation: none;
+}
+@keyframes ticker-spin {
+  0%   { transform: rotate(0deg); opacity: 0.6; }
+  50%  { opacity: 1; }
+  100% { transform: rotate(360deg); opacity: 0.6; }
+}
+@keyframes ticker-pulse {
+  0%, 100% { transform: scale(1);   opacity: 0.85; }
+  50%      { transform: scale(1.18); opacity: 1;    }
+}
+
+.ticker-line {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+  font-size: 11.5px;
+  letter-spacing: -0.005em;
+}
+.ticker[data-mode="action"] .ticker-line { color: var(--accent); font-style: normal; font-weight: 500; }
+.ticker.done .ticker-line { color: var(--text-dim); font-style: normal; }
+
+/* Expanded state: show full thinking history under the ticker */
+.ticker-expand {
+  display: none;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  font-style: normal;
+}
+.ticker.expanded {
+  flex-wrap: wrap;
+  border-radius: 12px;
+  cursor: zoom-out;
+  align-items: flex-start;
+}
+.ticker.expanded .ticker-icon { margin-top: 2px; }
+.ticker.expanded .ticker-line {
+  white-space: normal;
+  overflow: visible;
+}
+.ticker.expanded .ticker-expand { display: block; }
+.ticker.done.expanded .ticker-expand { color: var(--text-muted); }
+
 .msg.assistant .msg-actions {
   margin-left: 33px;
   opacity: 0;
