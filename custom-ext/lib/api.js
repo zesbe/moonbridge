@@ -5,40 +5,60 @@
 //  - streamRich(...)      : full content-block stream supporting tool_use accumulation
 //                           yields { type: 'block_open'|'text'|'thinking'|'tool_input'|
 //                                     'block_close'|'usage'|'stop_reason'|'done'|'error', ... }
+//
+// v2.4.2 — auto-fallback to non-streaming if SSE returns empty.
+// Some proxies (FreeModel.dev, LiteLLM-style adapters) advertise streaming
+// but emit non-standard SSE format that our parser misses. Rather than fail,
+// we detect "stream completed with 0 useful events" and retry with stream=false.
 
 export async function* streamMessages(opts) {
   for await (const ev of streamRich(opts)) {
-    if (ev.type === 'text' || ev.type === 'thinking' || ev.type === 'usage' || ev.type === 'done' || ev.type === 'error') {
+    if (ev.type === 'text' || ev.type === 'thinking' || ev.type === 'usage' || ev.type === 'done' || ev.type === 'error' || ev.type === 'stop_reason') {
       yield ev;
     }
   }
 }
 
-export async function* streamRich({
-  baseUrl,
-  apiToken,
-  model,
-  system,
-  messages,
-  tools,
-  temperature,
-  maxTokens,
-  signal,
-}) {
+export async function* streamRich(opts) {
+  const { baseUrl, apiToken, model } = opts;
   const url = `${baseUrl.replace(/\/$/, '')}/messages`;
 
-  // v2.3.2: smart max_tokens cap based on model — protects against:
-  //   1. User manually setting absurd values (e.g. 9999999)
-  //   2. OpenRouter / non-Anthropic proxies that have lower limits
-  //   3. Models with smaller context windows
-  // Defaults are output-token caps per known model family.
+  // First attempt: streaming
+  let usefulEvents = 0;
+  let sawError = false;
+  const events = [];
+  for await (const ev of _doRequest({ ...opts, url, stream: true })) {
+    events.push(ev);
+    if (ev.type === 'text' || ev.type === 'thinking' || ev.type === 'tool_input' ||
+        ev.type === 'block_open' || ev.type === 'stop_reason') {
+      usefulEvents++;
+    }
+    if (ev.type === 'error') sawError = true;
+    yield ev;
+  }
+
+  // If streaming gave us nothing useful AND no error, the proxy probably
+  // doesn't speak our SSE dialect. Retry as non-streaming JSON.
+  // (We've already yielded the original events including 'done', so we
+  //  emit additional events here as a continuation.)
+  if (usefulEvents === 0 && !sawError) {
+    console.warn('[api.js] Streaming returned no useful events; retrying without stream...');
+    yield { type: 'text', data: '' }; // placeholder so UI doesn't show "empty"
+    for await (const ev of _doRequest({ ...opts, url, stream: false })) {
+      yield ev;
+    }
+  }
+}
+
+// Single-request runner. Handles BOTH streaming and non-streaming.
+async function* _doRequest({ url, apiToken, model, system, messages, tools, temperature, maxTokens, signal, stream }) {
+  // v2.3.2: smart max_tokens cap based on model
   const modelLower = (model || '').toLowerCase();
-  let maxCap = 16384; // safe default
-  if (/opus|sonnet-4\.[5-9]|sonnet-5/.test(modelLower)) maxCap = 16384;
+  let maxCap = 16384;
+  if (/opus|sonnet-4\.[5-9]|sonnet-4-[5-9]|sonnet-5/.test(modelLower)) maxCap = 16384;
   else if (/haiku/.test(modelLower)) maxCap = 8192;
   else if (/gpt-4|gpt-5|o1|o3|llama-3\.[2-9]/.test(modelLower)) maxCap = 16384;
   else if (/owl|nano|mini/.test(modelLower)) maxCap = 8192;
-  // OpenRouter / unknown — be conservative
   if (/openrouter|^or\//.test(modelLower)) maxCap = Math.min(maxCap, 16384);
 
   const requestedMax = Number(maxTokens) || 16384;
@@ -48,8 +68,8 @@ export async function* streamRich({
     model,
     max_tokens: finalMax,
     messages,
-    stream: true,
   };
+  if (stream) body.stream = true;
   if (system) {
     if (typeof system === 'string' && system.trim()) body.system = system;
     else if (Array.isArray(system) && system.length) body.system = system;
@@ -66,6 +86,7 @@ export async function* streamRich({
         'Authorization': `Bearer ${apiToken}`,
         'x-api-key': apiToken,
         'anthropic-version': '2023-06-01',
+        'Accept': stream ? 'text/event-stream' : 'application/json',
       },
       body: JSON.stringify(body),
       signal,
@@ -86,6 +107,22 @@ export async function* streamRich({
     return;
   }
 
+  // ── Non-streaming branch: read full JSON, emit synthetic events
+  if (!stream) {
+    let json;
+    try {
+      const text = await res.text();
+      json = JSON.parse(text);
+    } catch (e) {
+      yield { type: 'error', data: `Non-streaming parse failed: ${e.message}` };
+      return;
+    }
+    yield* _emitFromJsonResponse(json);
+    yield { type: 'done' };
+    return;
+  }
+
+  // ── Streaming branch: SSE parse
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -105,14 +142,65 @@ export async function* streamRich({
       }
     }
     if (buffer.trim()) {
+      // Final flush — could be SSE or accidentally JSON (some proxies do this)
       const parsed = parseSseEvent(buffer);
-      if (parsed) for (const out of mapRich(parsed)) yield out;
+      if (parsed) {
+        for (const out of mapRich(parsed)) yield out;
+      } else {
+        // Try parsing as plain JSON (proxy returned non-streaming response despite stream=true)
+        try {
+          const json = JSON.parse(buffer.trim());
+          yield* _emitFromJsonResponse(json);
+        } catch {}
+      }
     }
     yield { type: 'done' };
   } catch (e) {
     if (e.name === 'AbortError') yield { type: 'done', data: 'aborted' };
     else yield { type: 'error', data: `Stream error: ${e.message}` };
   }
+}
+
+// Convert a non-streaming Anthropic-format JSON response into our event stream.
+// Also handles OpenAI-format responses (for proxies that return that shape).
+function* _emitFromJsonResponse(json) {
+  // Anthropic format: { content: [{type, text|thinking|...}], stop_reason, usage }
+  if (Array.isArray(json.content)) {
+    let blockIdx = 0;
+    for (const block of json.content) {
+      if (block.type === 'text' && block.text) {
+        yield { type: 'block_open', index: blockIdx, block: { type: 'text' } };
+        yield { type: 'text', index: blockIdx, data: block.text };
+        yield { type: 'block_close', index: blockIdx };
+      } else if (block.type === 'thinking' && block.thinking) {
+        yield { type: 'block_open', index: blockIdx, block: { type: 'thinking' } };
+        yield { type: 'thinking', index: blockIdx, data: block.thinking };
+        yield { type: 'block_close', index: blockIdx };
+      } else if (block.type === 'tool_use') {
+        yield { type: 'block_open', index: blockIdx, block: { type: 'tool_use', id: block.id, name: block.name } };
+        yield { type: 'tool_input', index: blockIdx, data: JSON.stringify(block.input || {}) };
+        yield { type: 'block_close', index: blockIdx };
+      }
+      blockIdx++;
+    }
+    if (json.stop_reason) yield { type: 'stop_reason', data: json.stop_reason };
+    if (json.usage) yield { type: 'usage', data: json.usage };
+    return;
+  }
+  // OpenAI format: { choices: [{message: {content}, finish_reason}], usage }
+  if (Array.isArray(json.choices) && json.choices[0]?.message) {
+    const msg = json.choices[0].message;
+    if (msg.content) {
+      yield { type: 'block_open', index: 0, block: { type: 'text' } };
+      yield { type: 'text', index: 0, data: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) };
+      yield { type: 'block_close', index: 0 };
+    }
+    if (json.choices[0].finish_reason) yield { type: 'stop_reason', data: json.choices[0].finish_reason };
+    if (json.usage) yield { type: 'usage', data: { input_tokens: json.usage.prompt_tokens, output_tokens: json.usage.completion_tokens } };
+    return;
+  }
+  // Unknown format — surface raw
+  yield { type: 'error', data: `Unknown response format. Raw: ${JSON.stringify(json).slice(0, 400)}` };
 }
 
 function parseSseEvent(raw) {
