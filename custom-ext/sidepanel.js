@@ -134,6 +134,13 @@ async function loadSettings() {
     cacheTtl: '5m',
   };
   if (!settings.cacheTtl) settings.cacheTtl = '5m';
+  // v2.3.2: clamp maxTokens — user may have set absurd value via options page
+  // (saw "9999999 in the output" error from OpenRouter). 32k is plenty for
+  // most agents tasks; bigger values just OOM the proxy.
+  if (typeof settings.maxTokens !== 'number' || settings.maxTokens < 256 || settings.maxTokens > 32768) {
+    settings.maxTokens = 16384;
+    safeStorageSet({ settings });
+  }
   if (data.agentPrefs) {
     if (Array.isArray(data.agentPrefs.toolWhitelist)) {
       // Restore stored whitelist BUT auto-enable any tool that's been added

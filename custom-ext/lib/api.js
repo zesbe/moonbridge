@@ -27,9 +27,26 @@ export async function* streamRich({
 }) {
   const url = `${baseUrl.replace(/\/$/, '')}/messages`;
 
+  // v2.3.2: smart max_tokens cap based on model — protects against:
+  //   1. User manually setting absurd values (e.g. 9999999)
+  //   2. OpenRouter / non-Anthropic proxies that have lower limits
+  //   3. Models with smaller context windows
+  // Defaults are output-token caps per known model family.
+  const modelLower = (model || '').toLowerCase();
+  let maxCap = 16384; // safe default
+  if (/opus|sonnet-4\.[5-9]|sonnet-5/.test(modelLower)) maxCap = 16384;
+  else if (/haiku/.test(modelLower)) maxCap = 8192;
+  else if (/gpt-4|gpt-5|o1|o3|llama-3\.[2-9]/.test(modelLower)) maxCap = 16384;
+  else if (/owl|nano|mini/.test(modelLower)) maxCap = 8192;
+  // OpenRouter / unknown — be conservative
+  if (/openrouter|^or\//.test(modelLower)) maxCap = Math.min(maxCap, 16384);
+
+  const requestedMax = Number(maxTokens) || 16384;
+  const finalMax = Math.max(256, Math.min(requestedMax, maxCap));
+
   const body = {
     model,
-    max_tokens: maxTokens || 16384,
+    max_tokens: finalMax,
     messages,
     stream: true,
   };
