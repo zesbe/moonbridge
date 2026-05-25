@@ -1703,8 +1703,25 @@ function summarizeInput(name, input) {
 // Uses a per-target queue keyed by the body element, so multiple concurrent
 // streams don't stomp each other.
 const _renderQueue = new WeakMap();
+
+// Strip <thinking>...</thinking> blocks from agent text. The v2.0 system prompt
+// forces agents to output plan in <thinking> tags, but the markdown renderer
+// shows them as raw text. We hide complete thinking blocks entirely, and during
+// streaming we hide everything from <thinking> onward until </thinking> closes.
+function stripThinkingBlocks(text) {
+  if (!text || !text.includes('<thinking>')) return text;
+  // Remove complete blocks first
+  let out = text.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, '');
+  // Hide in-progress block (no closing tag yet) so user doesn't see partial plan
+  const openIdx = out.indexOf('<thinking>');
+  if (openIdx !== -1) {
+    out = out.slice(0, openIdx).trimEnd();
+  }
+  return out;
+}
+
 function streamRender(text, target) {
-  _renderQueue.set(target, text);
+  _renderQueue.set(target, stripThinkingBlocks(text));
   if (target.__mbRenderScheduled) return;
   target.__mbRenderScheduled = true;
   requestAnimationFrame(() => {
