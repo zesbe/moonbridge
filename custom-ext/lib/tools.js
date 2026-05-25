@@ -2169,21 +2169,20 @@ export async function executeTool(name, input, ctx = {}) {
     return result;
   };
 
-  // v2.3: Smart param normalization — auto-correct common aliases + hint on others
+  // v2.3: Smart param normalization — auto-correct OBVIOUS aliases.
+  // CAREFUL: don't rename params that are legitimately used by other tools.
+  // - "query" is legit for find_element/web_search/db_query/ai_find_element/search_kb
+  // - "tab" is legit (none — tab_id everywhere) — safe to alias
+  // So we only alias params that have NO legitimate use case anywhere.
   if (input && typeof input === 'object') {
     const PARAM_ALIASES = {
-      // selector aliases
-      query: 'selector',
-      target: 'selector',
-      element: 'selector',
-      // tab_id aliases
+      // tab_id aliases (no tool uses just "tab" or "tabId")
       tab: 'tab_id',
       tabId: 'tab_id',
       // timeout aliases
       timeout: 'timeout_ms',
       timeoutMs: 'timeout_ms',
-      // url aliases
-      link: 'url',
+      // url aliases (some tools accept url, but href/link/address are unambiguous)
       href: 'url',
       address: 'url',
     };
@@ -2191,8 +2190,6 @@ export async function executeTool(name, input, ctx = {}) {
       if (wrong in input && !(correct in input)) {
         input[correct] = input[wrong];
         delete input[wrong];
-        // Don't fail — silently auto-correct so agent doesn't waste tokens.
-        // The hint surfaces only when there's NO correctable match (below).
       }
     }
   }
@@ -2661,6 +2658,14 @@ function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
     if (el.tagName === 'IMG') return el.alt?.slice(0, 80) || '';
     let t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
     if (!t && el.title) t = el.title;
+    // v2.3.1: form inputs without aria/placeholder/text → fall back to name/id
+    // (httpbin /forms/post has 12 inputs that all got eaten by dedupe before)
+    if (!t && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+      const name = el.getAttribute('name') || el.id || '';
+      const type = el.type || el.tagName.toLowerCase();
+      if (name) t = `[${type}] ${name}`;
+      else if (type) t = `[${type}]`;
+    }
     return t.slice(0, 80);
   }
   const isInteractive = (el) => {
@@ -2700,9 +2705,11 @@ function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
     const lbl = labelFor(el);
     // Drop empty/icon-only buttons that have no aria-label / text → useless to model
     if (!lbl) { dropped++; continue; }
-    // Group key: (label, tag, type, parent.tagName) — siblings of same kind dedupe
+    // Group key: (label, tag, type, name, parent.tagName) — siblings of same kind dedupe
+    // v2.3.1: added name attr so distinct form fields don't collapse together
     const parent = el.parentElement;
-    const key = `${tag}|${type}|${lbl}|${parent?.tagName || ''}`;
+    const elName = el.getAttribute('name') || '';
+    const key = `${tag}|${type}|${lbl}|${elName}|${parent?.tagName || ''}`;
     if (groupMap.has(key)) {
       const idx = groupMap.get(key);
       filtered[idx]._group_count++;
@@ -7673,21 +7680,31 @@ async function tool_extractFormData({ form_selector, tab_id }) {
       method: f.method || 'get',
       fields: [...f.querySelectorAll('input, textarea, select')].map(i => {
         // PII REDACTION (v2.3) — auto-redact sensitive fields by name/label/type
+        // v2.3.1 fixes: (1) skip checkbox/radio (values are option labels, not PII)
+        //               (2) word-boundary regex (was matching "pin" inside "topping")
+        //               (3) add checked field for checkbox/radio
+        const inputType = i.type || i.tagName.toLowerCase();
+        const isCheckable = inputType === 'checkbox' || inputType === 'radio';
         const name = (i.name || '').toLowerCase();
         const label = (i.labels?.[0]?.innerText || i.getAttribute('aria-label') || i.getAttribute('placeholder') || '').toLowerCase();
         const id = (i.id || '').toLowerCase();
-        const isSensitive = i.type === 'password' ||
-          /password|api[_-]?key|token|secret|otp|pin|cvv|cvc|ssn|credit[_-]?card|card[_-]?number/.test(name + ' ' + label + ' ' + id);
-        return {
+        const haystack = name + ' ' + label + ' ' + id;
+        // Use word boundaries (\b) so "pin" matches "pin" but NOT "topping"/"spin"/"shipping"
+        // Allow snake/dash/space separators between words
+        const PII_REGEX = /\b(password|passwd|pwd|api[_\-\s]?key|token|secret|otp|pin|cvv|cvc|ssn|credit[_\-\s]?card|card[_\-\s]?number)\b/;
+        const isSensitive = !isCheckable && (i.type === 'password' || PII_REGEX.test(haystack));
+        const out = {
           name: i.name || null,
           selector: buildSelector(i),
-          type: i.type || i.tagName.toLowerCase(),
+          type: inputType,
           value: isSensitive ? '***REDACTED***' : (i.value || ''),
           label: i.labels?.[0]?.innerText?.trim() || i.getAttribute('aria-label') || i.getAttribute('placeholder') || null,
           required: i.required || false,
           readonly: i.readOnly || false,
-          redacted: isSensitive || undefined,
         };
+        if (isSensitive) out.redacted = true;
+        if (isCheckable) out.checked = !!i.checked;
+        return out;
       }),
     }));
   }, [form_selector || '']);
@@ -7745,9 +7762,24 @@ async function tool_extractContacts({ tab_id }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
   const r = await execIsolated(tab.id, () => {
-    const text = document.body?.innerText || '';
+    // v2.3.1: hide injected indicators (was extracting "830189331" from "Reading tab 830189331...")
+    const injected = [...document.querySelectorAll('#cc-toast, #cc-cursor, #cc-pulse, [id^="cc-highlight"]')];
+    const prevDisplay = injected.map((el) => el.style.display);
+    injected.forEach((el) => { el.style.display = 'none'; });
+    let text = '';
+    try { text = document.body?.innerText || ''; }
+    finally { injected.forEach((el, i) => { el.style.display = prevDisplay[i]; }); }
     const emails = [...new Set(text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])];
-    const phones = [...new Set(text.match(/\+?[\d\s().-]{8,20}\d/g) || [])].filter(p => p.replace(/\D/g, '').length >= 8);
+    // v2.3.1: stricter phone regex — require either + prefix OR at least one
+    // separator (space/dash/dot/paren) to avoid capturing tab IDs and other
+    // bare numeric strings that aren't phone numbers
+    const phoneRegex = /(?:\+\d{1,3}[\s().-]?)?\(?\d{2,4}\)?[\s.\-/]\d{2,4}[\s.\-/]?\d{2,5}(?:[\s.\-/]?\d{1,5})?/g;
+    const phoneMatches = text.match(phoneRegex) || [];
+    const phones = [...new Set(phoneMatches)].filter(p => {
+      const digits = p.replace(/\D/g, '');
+      // Must have between 8-15 digits (E.164 max) AND at least one separator
+      return digits.length >= 8 && digits.length <= 15 && /[\s.\-/()]/.test(p);
+    });
     return { emails, phones };
   });
   return { content: `Emails: ${r.emails.length}, Phones: ${r.phones.length}\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\`` };
@@ -7828,7 +7860,18 @@ async function tool_getVisibleText({ tab_id, max_chars = 10000 }) {
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
   const r = await execIsolated(tab.id, (max) => {
-    const text = document.body?.innerText || '';
+    // v2.3.1: temporarily hide MoonBridge's own injected indicators so they
+    // don't leak into the extracted text ("Reading tab N..." was bleeding through)
+    const injected = [...document.querySelectorAll('#cc-toast, #cc-cursor, #cc-pulse, [id^="cc-highlight"]')];
+    const prevDisplay = injected.map((el) => el.style.display);
+    injected.forEach((el) => { el.style.display = 'none'; });
+    let text = '';
+    try {
+      text = document.body?.innerText || '';
+    } finally {
+      // Restore display values
+      injected.forEach((el, i) => { el.style.display = prevDisplay[i]; });
+    }
     return { text: text.slice(0, max), total: text.length };
   }, [max_chars]);
   const trunc = r.total > max_chars ? `\n\n[⚠ TRUNCATED: ${r.total} of ${max_chars} chars shown]` : '';
@@ -8093,6 +8136,11 @@ async function _callClaude(messages, maxTokens = 2000) {
   const { settings } = await chrome.storage.local.get(['settings']);
   if (!settings?.apiToken) throw new Error('No API key set.');
   const baseUrl = (settings.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
+  // v2.3.1: try multiple model fields so we use whatever the user has actually
+  // configured. Old code defaulted to bare "claude-sonnet-4-5" which fails on
+  // proxies that need vendor prefixes (kr/, anthropic/, etc), causing empty
+  // responses on ai_summarize/ai_describe/ai_find_element.
+  const model = settings.defaultModel || settings.model || settings.lastModel || 'kr/claude-sonnet-4.5';
   const resp = await fetch(`${baseUrl}/messages`, {
     method: 'POST',
     headers: {
@@ -8103,14 +8151,20 @@ async function _callClaude(messages, maxTokens = 2000) {
       'Accept': 'application/json',
     },
     body: JSON.stringify({
-      model: settings.defaultModel || 'claude-sonnet-4-5',
+      model,
       max_tokens: maxTokens,
       messages,
       stream: false,
     }),
   });
   if (!resp.ok) throw new Error(`Claude HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-  return await _parseClaudeResponse(resp);
+  const result = await _parseClaudeResponse(resp);
+  // v2.3.1: if response is empty, surface a useful error instead of returning ""
+  // which downstream tools render as "(empty)"
+  if (!result || !result.trim()) {
+    throw new Error(`Empty response from model ${model}. Check that the proxy supports this model name (try with "kr/" prefix or full vendor name).`);
+  }
+  return result;
 }
 
 // Some proxies (and Anthropic itself when stream=true is forced) return SSE

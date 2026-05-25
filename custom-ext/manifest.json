@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "2.3.0",
-  "description": "Smart browser automation agent — 160 tools, content validator, PII redaction, smart retry taxonomy, memory race fix, shadow DOM piercer, AI parse recovery, param hints, self-awareness doctrine",
+  "version": "2.3.1",
+  "description": "Smart browser automation agent — 160 tools, bug hunt fixes (find_element, get_page dedup, form redaction, AI tools empty, placeholder leaks, phone regex)",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
