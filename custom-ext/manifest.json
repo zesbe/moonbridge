@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "2.3.2",
-  "description": "Smart browser automation agent — 160 tools, smart max_tokens cap (OpenRouter compat), bug hunt fixes, smart agent doctrine",
+  "version": "2.4.0",
+  "description": "Smart browser automation agent — 160 tools, multi-provider preset (FreeModel, OpenRouter, Anthropic, 9Router, Bedrock, LiteLLM), smart agent doctrine",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",

@@ -13,15 +13,29 @@
 
     <section class="card">
       <label>
+        <span class="label">Provider Preset</span>
+        <select id="providerPreset">
+          <option value="custom">— Custom / Manual —</option>
+          <option value="freemodel">FreeModel.dev (Anthropic format)</option>
+          <option value="9router">9Router (kr/* models)</option>
+          <option value="anthropic">Anthropic (direct)</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="bedrock">AWS Bedrock (proxy)</option>
+          <option value="litellm">LiteLLM (self-hosted)</option>
+        </select>
+        <small>Pick a preset to auto-fill Base URL + recommended model. Or stay on Custom for manual config.</small>
+      </label>
+
+      <label>
         <span class="label">Base URL</span>
-        <input type="text" id="baseUrl" placeholder="https://your-endpoint.com/v1" />
-        <small>Must end at /v1 (the path segment before /messages).</small>
+        <input type="text" id="baseUrl" placeholder="https://cc.freemodel.dev/v1" />
+        <small id="baseUrlHint">Should end with <code>/v1</code> (the path before <code>/messages</code>). Auto-fixed on save if missing.</small>
       </label>
 
       <label>
         <span class="label">API Token</span>
         <div class="token-row">
-          <input type="password" id="apiToken" placeholder="sk-..." autocomplete="off" />
+          <input type="password" id="apiToken" placeholder="sk-... / fe_oa_... / sk-or-..." autocomplete="off" />
           <button type="button" id="toggleToken" class="ghost">Show</button>
         </div>
         <small>Sent as both <code>Authorization: Bearer</code> and <code>x-api-key</code>.</small>
@@ -30,15 +44,17 @@
       <label>
         <span class="label">Default Model</span>
         <div class="token-row">
-          <input type="text" id="defaultModel" placeholder="kr/claude-sonnet-4.5" />
+          <input type="text" id="defaultModel" placeholder="claude-sonnet-4-6" list="modelDatalist" />
           <button type="button" id="loadModelsBtn" class="ghost">Load list</button>
         </div>
+        <datalist id="modelDatalist"></datalist>
         <select id="modelList" class="hidden" size="8"></select>
+        <small id="modelHint"></small>
       </label>
 
       <label>
         <span class="label">System Prompt (optional)</span>
-        <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant..."></textarea>
+        <textarea id="systemPrompt" rows="4" placeholder="Leave blank to use MoonBridge's built-in smart agent doctrine."></textarea>
       </label>
 
       <div class="row">
@@ -75,12 +91,14 @@
     </section>
 
     <section class="card small">
-      <h2>Tips</h2>
+      <h2>Provider quick reference</h2>
       <ul>
-        <li>Press <kbd>Ctrl</kbd>+<kbd>E</kbd> to toggle the side panel.</li>
-        <li>The side panel sends conversation history each turn (stateless).</li>
-        <li>Click the model dropdown to switch model mid-conversation.</li>
+        <li><strong>FreeModel.dev</strong>: Base URL <code>https://cc.freemodel.dev/v1</code> · Models: <code>claude-sonnet-4-6</code>, <code>claude-opus-4-7</code>, <code>claude-haiku-4-5-20251001</code></li>
+        <li><strong>Anthropic direct</strong>: <code>https://api.anthropic.com/v1</code> · API key from console.anthropic.com</li>
+        <li><strong>OpenRouter</strong>: <code>https://openrouter.ai/api/v1</code> · Use anthropic/* models for tool use support</li>
+        <li><strong>9Router</strong>: <code>https://rck8ncp.abc-tunnel.us/v1</code> · Models prefixed with <code>kr/</code></li>
       </ul>
+      <p>Press <kbd>Ctrl</kbd>+<kbd>E</kbd> to toggle the side panel. Click the model dropdown to switch model mid-conversation.</p>
     </section>
   </main>
 
