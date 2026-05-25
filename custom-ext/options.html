@@ -85,9 +85,22 @@
 
       <div class="actions">
         <button type="button" id="testBtn" class="secondary">Test connection</button>
+        <button type="button" id="saveAsPresetBtn" class="secondary">💾 Save as Preset</button>
         <button type="button" id="saveBtn" class="primary">Save</button>
       </div>
       <div id="status" class="status"></div>
+    </section>
+
+    <section class="card" id="savedPresetsCard">
+      <div class="card-head">
+        <h2 style="margin: 0">🔌 Saved Connections</h2>
+        <small style="color: var(--text-dim); margin-left: 8px;">Quick-switch between providers</small>
+      </div>
+      <div id="savedPresetsList" class="presets-list">
+        <p class="empty-presets" style="color: var(--text-dim); padding: 12px 0;">
+          No saved connections yet. Configure above, then click <strong>Save as Preset</strong>.
+        </p>
+      </div>
     </section>
 
     <section class="card small">

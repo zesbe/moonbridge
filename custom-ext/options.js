@@ -317,6 +317,7 @@ async function testConnection() {
 
 // Wire events
 $('saveBtn').addEventListener('click', save);
+$('saveAsPresetBtn').addEventListener('click', saveAsPreset);
 $('loadModelsBtn').addEventListener('click', loadModels);
 $('testBtn').addEventListener('click', testConnection);
 
@@ -337,4 +338,195 @@ $('toggleToken').addEventListener('click', () => {
   $('toggleToken').textContent = isPwd ? 'Hide' : 'Show';
 });
 
-load();
+// =====================================================================
+// CONNECTION PRESETS (v2.5) — save unlimited account/endpoint combos
+// =====================================================================
+
+const PRESETS_KEY = 'connectionPresets';
+
+// Provider icon shorthand for visual identification
+const PRESET_ICONS = {
+  freemodel: '🆓',
+  '9router': '🌐',
+  anthropic: '🤖',
+  openrouter: '🔀',
+  bedrock: '☁️',
+  litellm: '⚙️',
+  custom: '🔌',
+};
+
+async function loadConnectionPresets() {
+  const { [PRESETS_KEY]: presets } = await chrome.storage.local.get([PRESETS_KEY]);
+  return Array.isArray(presets) ? presets : [];
+}
+
+async function saveConnectionPresets(presets) {
+  await chrome.storage.local.set({ [PRESETS_KEY]: presets });
+}
+
+async function saveAsPreset() {
+  const name = prompt('Name this connection (e.g. "OpenRouter — work", "Anthropic personal"):',
+    PROVIDERS[providerPreset.value]?.name || 'My Connection');
+  if (!name || !name.trim()) return;
+
+  const baseUrl = normalizeBaseUrl(fields.baseUrl.value);
+  const apiToken = fields.apiToken.value.trim();
+  const defaultModel = fields.defaultModel.value.trim();
+
+  if (!baseUrl || !apiToken || !defaultModel) {
+    setStatus('Fill Base URL, API Token, and Default Model first.', 'err');
+    return;
+  }
+
+  const presets = await loadConnectionPresets();
+  // If a preset with same name exists, overwrite
+  const existing = presets.findIndex((p) => p.name === name.trim());
+  const preset = {
+    id: existing >= 0 ? presets[existing].id : 'pre_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    name: name.trim(),
+    provider: providerPreset.value,
+    baseUrl,
+    apiToken,
+    defaultModel,
+    systemPrompt: fields.systemPrompt.value || '',
+    temperature: parseFloat(fields.temperature.value) || 1.0,
+    maxTokens: parseInt(fields.maxTokens.value, 10) || 16384,
+    cacheTtl: fields.cacheTtl.value === '1h' ? '1h' : '5m',
+    createdAt: existing >= 0 ? presets[existing].createdAt : Date.now(),
+    lastUsedAt: Date.now(),
+  };
+  if (existing >= 0) presets[existing] = preset;
+  else presets.push(preset);
+
+  await saveConnectionPresets(presets);
+  setStatus(`✓ ${existing >= 0 ? 'Updated' : 'Saved'} preset "${name}".`, 'ok');
+  await renderPresets();
+}
+
+async function activatePreset(id) {
+  const presets = await loadConnectionPresets();
+  const p = presets.find((x) => x.id === id);
+  if (!p) return;
+
+  // Apply to fields
+  fields.baseUrl.value = p.baseUrl;
+  fields.apiToken.value = p.apiToken;
+  fields.defaultModel.value = p.defaultModel;
+  fields.systemPrompt.value = p.systemPrompt || '';
+  fields.temperature.value = p.temperature ?? 1.0;
+  fields.maxTokens.value = p.maxTokens ?? 16384;
+  fields.cacheTtl.value = p.cacheTtl || '5m';
+  providerPreset.value = p.provider || detectProvider(p.baseUrl);
+  applyProviderPreset(providerPreset.value);
+
+  // Persist as current settings
+  const settings = {
+    baseUrl: p.baseUrl,
+    apiToken: p.apiToken,
+    defaultModel: p.defaultModel,
+    systemPrompt: p.systemPrompt || '',
+    temperature: p.temperature ?? 1.0,
+    maxTokens: p.maxTokens ?? 16384,
+    cacheTtl: p.cacheTtl || '5m',
+    pinSidepanelToTab: !!fields.pinSidepanelToTab.checked,
+  };
+  await chrome.storage.local.set({ settings });
+
+  // Update lastUsedAt
+  p.lastUsedAt = Date.now();
+  await saveConnectionPresets(presets);
+
+  setStatus(`✓ Activated "${p.name}". Endpoint + model + token applied.`, 'ok');
+  await renderPresets();
+}
+
+async function deletePreset(id) {
+  const presets = await loadConnectionPresets();
+  const p = presets.find((x) => x.id === id);
+  if (!p) return;
+  if (!confirm(`Delete preset "${p.name}"?\n\nThis only removes the saved config — your current active connection stays.`)) return;
+  const next = presets.filter((x) => x.id !== id);
+  await saveConnectionPresets(next);
+  setStatus(`Deleted preset "${p.name}".`, 'ok');
+  await renderPresets();
+}
+
+async function renderPresets() {
+  const presets = await loadConnectionPresets();
+  const container = $('savedPresetsList');
+  container.replaceChildren();
+
+  if (!presets.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-presets';
+    empty.style.color = 'var(--text-dim)';
+    empty.style.padding = '12px 0';
+    empty.innerHTML = 'No saved connections yet. Configure above, then click <strong>Save as Preset</strong>.';
+    container.appendChild(empty);
+    return;
+  }
+
+  // Sort by lastUsedAt (most recent first)
+  const sorted = presets.slice().sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
+
+  // Get current active settings to mark which preset is active
+  const { settings } = await chrome.storage.local.get(['settings']);
+  const currentBase = (settings?.baseUrl || '').replace(/\/$/, '');
+  const currentToken = settings?.apiToken || '';
+  const currentModel = settings?.defaultModel || '';
+
+  for (const p of sorted) {
+    const isActive = p.baseUrl.replace(/\/$/, '') === currentBase &&
+                     p.apiToken === currentToken &&
+                     p.defaultModel === currentModel;
+
+    const item = document.createElement('div');
+    item.className = 'preset-item' + (isActive ? ' active' : '');
+
+    const icon = document.createElement('div');
+    icon.className = 'preset-icon';
+    icon.textContent = PRESET_ICONS[p.provider] || '🔌';
+    item.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'preset-info';
+    const name = document.createElement('div');
+    name.className = 'preset-name';
+    name.appendChild(document.createTextNode(p.name));
+    if (isActive) {
+      const badge = document.createElement('span');
+      badge.className = 'preset-active-badge';
+      badge.textContent = 'ACTIVE';
+      name.appendChild(badge);
+    }
+    info.appendChild(name);
+    const meta = document.createElement('div');
+    meta.className = 'preset-meta';
+    const tokenMask = p.apiToken ? p.apiToken.slice(0, 6) + '…' + p.apiToken.slice(-4) : '(no token)';
+    meta.textContent = `${p.defaultModel} · ${tokenMask}`;
+    meta.title = `${p.baseUrl}\n${p.defaultModel}\nToken: ${tokenMask}`;
+    info.appendChild(meta);
+    item.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'preset-actions';
+    const useBtn = document.createElement('button');
+    useBtn.className = 'preset-btn activate';
+    useBtn.textContent = isActive ? '✓ In use' : 'Use';
+    useBtn.disabled = isActive;
+    useBtn.addEventListener('click', () => activatePreset(p.id));
+    actions.appendChild(useBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'preset-btn danger';
+    delBtn.textContent = '🗑';
+    delBtn.title = 'Delete preset';
+    delBtn.addEventListener('click', () => deletePreset(p.id));
+    actions.appendChild(delBtn);
+
+    item.appendChild(actions);
+    container.appendChild(item);
+  }
+}
+
+load().then(() => renderPresets());
