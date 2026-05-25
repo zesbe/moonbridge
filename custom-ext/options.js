@@ -264,16 +264,23 @@ async function testConnection() {
   setStatus(`Testing ${model} at ${baseUrl}…`);
   try {
     let gotText = false;
+    let gotThinking = false;
     let usage = null;
+    let stopReason = null;
     for await (const ev of streamMessages({
       baseUrl,
       apiToken,
       model,
       messages: [{ role: 'user', content: 'reply with the single word: ok' }],
-      maxTokens: 16,
+      // v2.4.1: bump from 16 → 256 because thinking models (Opus 4.x, sonnet
+      // with extended thinking) consume tokens in <thinking> block before
+      // any text. 16 was getting eaten entirely by thinking → "no text" false negative.
+      maxTokens: 256,
     })) {
       if (ev.type === 'text' && ev.data) gotText = true;
+      if (ev.type === 'thinking' && ev.data) gotThinking = true;
       if (ev.type === 'usage') usage = ev.data;
+      if (ev.type === 'stop_reason') stopReason = ev.data;
       if (ev.type === 'error') {
         // Provide hints based on error pattern
         const msg = String(ev.data || '');
@@ -290,8 +297,13 @@ async function testConnection() {
     if (gotText) {
       const usageStr = usage ? ` · usage: in=${usage.input_tokens}, out=${usage.output_tokens}` : '';
       setStatus(`✓ Connection works. Model "${model}" responded${usageStr}.`, 'ok');
+    } else if (gotThinking) {
+      // v2.4.1: distinguish "thinking-only" from "no response" — much better diagnostic
+      setStatus(`✓ Connection works (thinking mode). Model "${model}" produced reasoning but no final text in 256 tokens (extended thinking consumes lots). The endpoint is healthy — full conversations will work fine.`, 'ok');
+    } else if (stopReason === 'max_tokens') {
+      setStatus(`⚠ Connection works but model hit max_tokens (256) before responding. Model "${model}" may need extended thinking budget. Endpoint is healthy.`, 'ok');
     } else {
-      setStatus('Connected but no text. Model may be thinking-only or returned empty. Try a different model.', 'err');
+      setStatus(`Connected but model "${model}" returned nothing (stop_reason=${stopReason || 'unknown'}). Try a different model or check Base URL.`, 'err');
     }
   } catch (e) {
     setStatus(`✕ Error: ${e.message}`, 'err');
