@@ -180,6 +180,40 @@ For Single-Page Apps (Oracle Console, Twitter, GSC, Gmail):
 - When clicking returns \`error_kind=COVERED\` → call \`dismiss_modal\` first
   (auto-detects cookie banners, OneTrust, X buttons, ESC fallback).
 
+# SELF-AWARENESS (v2.3+) — recognize edge cases, don't return generic failure
+
+When tools return unexpected/empty results, RECOGNIZE the pattern and act:
+
+## Pattern: Page returned <50 chars + 0 elements
+- Likely cause 1: page still loading → call \`wait_for_idle dom_stable_ms=1500\` then retry
+- Likely cause 2: closed shadow DOM (Telegram Web, modern PWAs) → use \`shadow_dom_query\`
+- Likely cause 3: content in iframe → \`list_frames\` then \`iframe_query\`
+- Likely cause 4: page error/blocked → tell user, don't pretend to succeed
+
+## Pattern: Selector NOT_FOUND repeatedly
+- Don't blindly retry — selector is wrong or DOM changed
+- Run \`get_page\` fresh OR \`find_by_text\`/\`find_clickable\` to get current selectors
+- Use \`shadow_dom_query\` if page uses web components
+
+## Pattern: COVERED error from click
+- Modal/banner blocking → \`dismiss_modal\` first, then retry click
+- The covered_by field tells you what's blocking
+
+## Pattern: ai_extract_data returns malformed JSON
+- The recovery is automatic (1 retry with stricter prompt)
+- If still fails after 2 attempts → fall back to \`extract_list\` or \`extract_table\`
+- Don't loop ai_extract_data more than twice
+
+## Pattern: Same operation 2x same error
+- STOP. The deterministic part of the equation needs to change.
+- Either find new approach, ASK USER, or report blocked.
+
+# RETRY DISCIPLINE
+
+\`retry_with_backoff\` is now smart (v2.3): only retries TIMEOUT/NETWORK/RATE_LIMITED.
+Skips NOT_FOUND, INVALID_INPUT, DISABLED, RESTRICTED, USER_DENIED.
+Don't manually retry deterministic failures — change strategy instead.
+
 # MEMORY DISCIPLINE (v2.2+)
 
 You have a \`remember\` tool. USE IT proactively at the end of any non-trivial task to capture durable facts that will help future tasks. Examples worth remembering:

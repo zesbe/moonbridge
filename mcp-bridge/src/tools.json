@@ -1268,6 +1268,26 @@
     }
   },
   {
+    "name": "shadow_dom_query",
+    "description": "Pierce CLOSED shadow DOM via CDP (DOM.getDocument pierce=true). Use when get_page returns empty/sparse on Telegram, modern SPAs, web components, etc. Returns elements found in shadow roots with their shadow_path. Pass query to filter; omit to dump all shadow-DOM elements.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string",
+          "description": "Optional substring filter (matched against tag, id, class, role, aria-label, placeholder)."
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Max results (default 100)."
+        }
+      }
+    }
+  },
+  {
     "name": "find_by_text",
     "description": "Scan visible elements for one matching the given text. Returns CSS selector, XPath, and #ref-N for stable interaction. Better than guessing #ref from get_page.",
     "input_schema": {

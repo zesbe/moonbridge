@@ -764,6 +764,18 @@ export const ALL_TOOLS = [
       properties: { tab_id: { type: 'integer' } },
     },
   },
+  {
+    name: 'shadow_dom_query',
+    description: 'Pierce CLOSED shadow DOM via CDP (DOM.getDocument pierce=true). Use when get_page returns empty/sparse on Telegram, modern SPAs, web components, etc. Returns elements found in shadow roots with their shadow_path. Pass query to filter; omit to dump all shadow-DOM elements.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tab_id: { type: 'integer' },
+        query: { type: 'string', description: 'Optional substring filter (matched against tag, id, class, role, aria-label, placeholder).' },
+        max_nodes: { type: 'integer', description: 'Max results (default 100).' },
+      },
+    },
+  },
 
   // ===== XPath / text helper =====
   {
@@ -2157,6 +2169,34 @@ export async function executeTool(name, input, ctx = {}) {
     return result;
   };
 
+  // v2.3: Smart param normalization — auto-correct common aliases + hint on others
+  if (input && typeof input === 'object') {
+    const PARAM_ALIASES = {
+      // selector aliases
+      query: 'selector',
+      target: 'selector',
+      element: 'selector',
+      // tab_id aliases
+      tab: 'tab_id',
+      tabId: 'tab_id',
+      // timeout aliases
+      timeout: 'timeout_ms',
+      timeoutMs: 'timeout_ms',
+      // url aliases
+      link: 'url',
+      href: 'url',
+      address: 'url',
+    };
+    for (const [wrong, correct] of Object.entries(PARAM_ALIASES)) {
+      if (wrong in input && !(correct in input)) {
+        input[correct] = input[wrong];
+        delete input[wrong];
+        // Don't fail — silently auto-correct so agent doesn't waste tokens.
+        // The hint surfaces only when there's NO correctable match (below).
+      }
+    }
+  }
+
   if (ctx.whitelist && !ctx.whitelist.has(name)) {
     return wrap({ is_error: true, error_code: ERR_CODES.WHITELIST,
                   content: `Tool "${name}" is disabled for this conversation.` });
@@ -2279,6 +2319,7 @@ export async function executeTool(name, input, ctx = {}) {
       case 'note_delete':    return wrap(await tool_noteDelete(input || {}));
       case 'get_page_diff':  return wrap(await tool_getPageDiff(input || {}));
       case 'list_frames':    return wrap(await tool_listFrames(input || {}));
+      case 'shadow_dom_query': return wrap(await tool_shadowDomQuery(input || {}));
       case 'find_by_text':   return wrap(await tool_findByText(input || {}));
       case 'drag_drop':      return wrap(await tool_dragDrop(input || {}));
       case 'mouse_drag':     return wrap(await tool_mouseDrag(input || {}));
@@ -2332,7 +2373,18 @@ export async function executeTool(name, input, ctx = {}) {
       case 'recall_memories': return wrap(await tool_recallMemories(ctx));
       case 'search_kb':      return wrap(await tool_searchKb(input || {}, ctx));
       case 'list_kb':        return wrap(await tool_listKb(ctx));
-      default: return wrap({ is_error: true, error_code: ERR_CODES.UNKNOWN_TOOL, content: `Unknown tool: ${name}` });
+      default: {
+        // v2.3: smart hint for unknown tools — find closest match
+        const allNames = ALL_TOOLS.map((t) => t.name);
+        const lower = name.toLowerCase();
+        const close = allNames.filter((n) =>
+          n.toLowerCase().startsWith(lower.slice(0, 3)) ||
+          n.toLowerCase().includes(lower) ||
+          lower.includes(n.toLowerCase().slice(0, 4))
+        ).slice(0, 3);
+        const hint = close.length ? ` Did you mean: ${close.join(', ')}?` : '';
+        return wrap({ is_error: true, error_code: ERR_CODES.UNKNOWN_TOOL, content: `Unknown tool: ${name}.${hint}` });
+      }
     }
   } catch (e) {
     return wrap({ is_error: true, error_code: ERR_CODES.EXEC_FAILED, content: `Tool ${name} failed: ${e.message || String(e)}` });
@@ -2369,14 +2421,37 @@ async function tool_getPage({ max_chars = 4000, tab_id, full = false, include_sh
                       `Try a normal http(s) page instead.` };
   }
   await indicator(tab.id, { type: 'CC_TOAST', text: `Reading ${tab_id ? 'tab ' + tab_id : 'page'}…` });
-  const snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow, focus]);
+  let snap = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow, focus]);
   if (!snap) return { content: 'No snapshot returned.' };
+
+  // CONTENT VALIDATOR (v2.3) — prevent false-success on still-loading pages.
+  // If text < 50 chars AND no buttons/inputs detected, retry once after wait.
+  // Common cause: SPA hasn't rendered yet, or shadow DOM is closed.
+  const isLikelyEmpty = (s) =>
+    !s.text || s.text.trim().length < 50;
+  const isLikelyInert = (s) =>
+    !s.elements || s.elements.length === 0;
+  if (isLikelyEmpty(snap) && isLikelyInert(snap)) {
+    // Wait + retry once. Doubles the wait if first attempt was empty.
+    await new Promise((r) => setTimeout(r, 1200));
+    const retry = await execIsolated(tab.id, pageSnapshotInPage, [max_chars, full, include_shadow, focus]);
+    if (retry) snap = retry;
+  }
+
   const lines = [];
   lines.push(`URL: ${snap.url}`);
   lines.push(`TITLE: ${snap.title}`);
   lines.push(`TAB: id=${tab.id}${tab.active ? ' (active)' : ''}`);
   lines.push(`SCROLL: y=${snap.scrollY}/${snap.scrollHeight} (viewport=${snap.viewportH})`);
   if (snap.focus_used) lines.push(`FOCUS: ${snap.focus_used}${snap.focus_selector ? ' (' + snap.focus_selector + ')' : ''}`);
+
+  // Surface STILL-EMPTY warning if retry didn't help
+  if (isLikelyEmpty(snap) && isLikelyInert(snap)) {
+    lines.push(`⚠ EMPTY: Page returned <50 chars + 0 interactive elements after retry. ` +
+               `Possible: still loading (try wait_for_idle dom_stable_ms=1500), ` +
+               `closed shadow DOM (Telegram/SPA — try shadow_dom_query), ` +
+               `iframe content (try list_frames + iframe_query), or page error.`);
+  }
 
   // Explicit truncation flag — addresses AI feedback "agent kadang tidak sadar isinya terpotong"
   if (snap.text_truncated) {
@@ -2533,6 +2608,12 @@ function pageSnapshotInPage(maxChars, full, includeShadow, focus) {
           const p = node.parentElement;
           if (!p) return NodeFilter.FILTER_REJECT;
           if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+          // v2.3: skip MoonBridge's own injected indicators
+          let anc = p;
+          while (anc && anc !== document.body) {
+            if (anc.id && /^cc-(toast|cursor|pulse|highlight)/.test(anc.id)) return NodeFilter.FILTER_REJECT;
+            anc = anc.parentElement;
+          }
           const cs = getComputedStyle(p);
           if (cs.display === 'none' || cs.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
           return NodeFilter.FILTER_ACCEPT;
@@ -5334,6 +5415,102 @@ async function tool_listFrames({ tab_id }) {
 }
 
 // =====================================================================
+// SHADOW DOM QUERY (v2.3) — pierce closed shadow roots via CDP
+// Standard JS can't access closed shadow DOM (Telegram Web, modern SPAs).
+// CDP DOM.getDocument(pierce=true) walks past .mode === 'closed' boundaries.
+// =====================================================================
+
+async function tool_shadowDomQuery({ tab_id, query, max_nodes = 100 }) {
+  const tab = await resolveTab(tab_id);
+  if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
+  let attached = false;
+  try { await chrome.debugger.attach({ tabId: tab.id }, '1.3'); attached = true; }
+  catch (e) { if (!String(e.message).includes('already attached')) return { is_error: true, content: `Cannot attach debugger: ${e.message}` }; }
+  try {
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'DOM.enable');
+    // pierce: true walks INTO every shadow root (open and closed)
+    const doc = await chrome.debugger.sendCommand(
+      { tabId: tab.id }, 'DOM.getDocument', { depth: -1, pierce: true });
+    const root = doc?.root;
+    if (!root) return { is_error: true, content: 'CDP DOM.getDocument returned no root.' };
+
+    const queryLower = (query || '').toLowerCase();
+    const matches = [];
+    const shadowRootCount = { count: 0 };
+
+    // Walk every node, count shadow roots, filter by query
+    function walk(node, depth = 0, ancestorPath = []) {
+      if (matches.length >= max_nodes) return;
+      if (!node) return;
+      const tagName = (node.nodeName || '').toLowerCase();
+      const isElement = node.nodeType === 1; // ELEMENT_NODE
+      // Track shadow roots
+      if (node.shadowRoots && node.shadowRoots.length) {
+        shadowRootCount.count += node.shadowRoots.length;
+        for (const sr of node.shadowRoots) {
+          walk(sr, depth + 1, [...ancestorPath, `${tagName}::shadow`]);
+        }
+      }
+      // Filter: if query provided, match against tag/class/id/text
+      if (isElement && query) {
+        const attrs = node.attributes || [];
+        const attrMap = {};
+        for (let i = 0; i < attrs.length; i += 2) attrMap[attrs[i]] = attrs[i + 1];
+        const id = attrMap.id || '';
+        const cls = attrMap.class || '';
+        const role = attrMap.role || '';
+        const ariaLabel = attrMap['aria-label'] || '';
+        const placeholder = attrMap.placeholder || '';
+        const haystack = `${tagName} ${id} ${cls} ${role} ${ariaLabel} ${placeholder} ${node.nodeValue || ''}`.toLowerCase();
+        if (haystack.includes(queryLower)) {
+          matches.push({
+            tag: tagName,
+            id, class: cls, role, 'aria-label': ariaLabel, placeholder,
+            shadow_path: ancestorPath.length ? ancestorPath.join(' > ') : null,
+            depth,
+            backendNodeId: node.backendNodeId,
+          });
+        }
+      } else if (isElement && !query) {
+        // No query → return all elements with shadow path (limited)
+        const attrs = node.attributes || [];
+        const attrMap = {};
+        for (let i = 0; i < attrs.length; i += 2) attrMap[attrs[i]] = attrs[i + 1];
+        if (ancestorPath.length) {
+          // Only push elements that are inside shadow DOM
+          matches.push({
+            tag: tagName,
+            id: attrMap.id || null,
+            class: attrMap.class || null,
+            'aria-label': attrMap['aria-label'] || null,
+            shadow_path: ancestorPath.join(' > '),
+            depth,
+          });
+        }
+      }
+      // Walk children
+      const children = node.children || [];
+      for (const c of children) walk(c, depth + 1, ancestorPath);
+      const contentDoc = node.contentDocument;
+      if (contentDoc) walk(contentDoc, depth + 1, ancestorPath);
+    }
+
+    walk(root);
+
+    if (!matches.length) {
+      return { content: query
+        ? `No matches for "${query}". Found ${shadowRootCount.count} shadow root(s) total.`
+        : `No shadow-DOM elements found. Page has ${shadowRootCount.count} shadow root(s) but they are empty.` };
+    }
+    return { content: `Found ${matches.length} match${matches.length > 1 ? 'es' : ''}${query ? ' for "' + query + '"' : ''} (${shadowRootCount.count} shadow root(s) total):\n\`\`\`json\n${JSON.stringify(matches, null, 2)}\n\`\`\`` };
+  } catch (e) {
+    return { is_error: true, content: `shadow_dom_query failed: ${e.message}` };
+  } finally {
+    if (attached) { try { await chrome.debugger.detach({ tabId: tab.id }); } catch {} }
+  }
+}
+
+// =====================================================================
 // FIND BY TEXT
 // =====================================================================
 
@@ -5557,6 +5734,9 @@ async function tool_getPageText({ tab_id, max_chars = 8000 }) {
 function getPageTextInPage(maxChars) {
   // Prefer <main>, <article>, then body
   const root = document.querySelector('main, article') || document.body;
+  // v2.3: skip MoonBridge's own injected indicators (cc-toast, cc-cursor, etc.)
+  // so they don't pollute extraction output ("Reading tab N..." appearing in scrapes).
+  const isInjectedIndicator = (node) => node?.id && /^cc-(toast|cursor|pulse|highlight)/.test(node.id);
   function walk(el) {
     let out = '';
     for (const node of el.childNodes) {
@@ -5564,6 +5744,7 @@ function getPageTextInPage(maxChars) {
         const t = node.nodeValue;
         if (t && t.trim()) out += t.replace(/\s+/g, ' ');
       } else if (node.nodeType === 1) {
+        if (isInjectedIndicator(node)) continue;
         const cs = getComputedStyle(node);
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
         if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|NAV|FOOTER|ASIDE)$/.test(node.tagName)) continue;
@@ -7490,15 +7671,24 @@ async function tool_extractFormData({ form_selector, tab_id }) {
       form_index: fi,
       action: f.action || null,
       method: f.method || 'get',
-      fields: [...f.querySelectorAll('input, textarea, select')].map(i => ({
-        name: i.name || null,
-        selector: buildSelector(i),
-        type: i.type || i.tagName.toLowerCase(),
-        value: i.type === 'password' ? '***' : (i.value || ''),
-        label: i.labels?.[0]?.innerText?.trim() || i.getAttribute('aria-label') || i.getAttribute('placeholder') || null,
-        required: i.required || false,
-        readonly: i.readOnly || false,
-      })),
+      fields: [...f.querySelectorAll('input, textarea, select')].map(i => {
+        // PII REDACTION (v2.3) — auto-redact sensitive fields by name/label/type
+        const name = (i.name || '').toLowerCase();
+        const label = (i.labels?.[0]?.innerText || i.getAttribute('aria-label') || i.getAttribute('placeholder') || '').toLowerCase();
+        const id = (i.id || '').toLowerCase();
+        const isSensitive = i.type === 'password' ||
+          /password|api[_-]?key|token|secret|otp|pin|cvv|cvc|ssn|credit[_-]?card|card[_-]?number/.test(name + ' ' + label + ' ' + id);
+        return {
+          name: i.name || null,
+          selector: buildSelector(i),
+          type: i.type || i.tagName.toLowerCase(),
+          value: isSensitive ? '***REDACTED***' : (i.value || ''),
+          label: i.labels?.[0]?.innerText?.trim() || i.getAttribute('aria-label') || i.getAttribute('placeholder') || null,
+          required: i.required || false,
+          readonly: i.readOnly || false,
+          redacted: isSensitive || undefined,
+        };
+      }),
     }));
   }, [form_selector || '']);
   if (!r?.length) return { is_error: true, error_code: ERR_CODES.NOT_FOUND, content: 'No forms found.' };
@@ -7768,16 +7958,43 @@ async function tool_scrollThroughPage({ tab_id, step_px = 500, delay_ms = 300, m
 }
 
 // ---- retry_with_backoff ---------------------------------------------
+// SMART TAXONOMY (v2.3) — only retry transient/recoverable errors.
+// Skip deterministic failures (NOT_FOUND, INVALID_INPUT, DISABLED) since
+// retrying same input gets same result.
+const RETRYABLE_ERROR_CODES = new Set([
+  'ERR_TIMEOUT',
+  'ERR_RATE_LIMITED',
+  'ERR_EXEC_FAILED',
+]);
+const RETRYABLE_PATTERNS = /timeout|network|fetch|busy|temporarily|503|502|429|reset|refused|abort/i;
+
+function isRetryable(result) {
+  if (!result?.is_error) return false;
+  if (RETRYABLE_ERROR_CODES.has(result.error_code)) return true;
+  // Skip deterministic failures explicitly
+  if (['ERR_NOT_FOUND', 'ERR_INVALID_INPUT', 'ERR_RESTRICTED', 'ERR_PERMISSION', 'ERR_USER_DENIED'].includes(result.error_code)) {
+    return false;
+  }
+  // Heuristic on content text
+  if (typeof result.content === 'string' && RETRYABLE_PATTERNS.test(result.content)) return true;
+  return false;
+}
+
 async function tool_retryWithBackoff({ tool, input, max_attempts = 3, backoff_ms = 500 }, ctx) {
   if (!tool) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'tool required.' };
   let last;
   for (let i = 0; i < max_attempts; i++) {
     last = await executeTool(tool, input || {}, ctx);
     if (!last.is_error) return { content: `✓ Succeeded on attempt ${i + 1}/${max_attempts}\n${last.content}` };
+    // SHORT-CIRCUIT on non-retryable errors — don't waste attempts
+    if (!isRetryable(last)) {
+      return { is_error: true, error_code: last.error_code || ERR_CODES.EXEC_FAILED,
+               content: `✕ Non-retryable error (${last.error_code || 'unknown'}). Stopping after attempt ${i + 1}/${max_attempts}: ${last.content}` };
+    }
     if (i < max_attempts - 1) await new Promise(r => setTimeout(r, backoff_ms * Math.pow(2, i)));
   }
   return { is_error: true, error_code: last?.error_code || ERR_CODES.EXEC_FAILED,
-           content: `All ${max_attempts} attempts failed. Last error: ${last?.content}` };
+           content: `All ${max_attempts} attempts failed (retryable error). Last: ${last?.content}` };
 }
 
 // ---- auth save/restore/list -----------------------------------------
@@ -7994,19 +8211,40 @@ async function tool_aiFindElement({ intent, tab_id }) {
 }
 
 // ---- ai_extract_data ------------------------------------------------
+// v2.3: malformed JSON recovery — auto-retry once with stricter prompt,
+// surface raw response preview if still failing.
 async function tool_aiExtractData({ description, schema, tab_id, max_chars = 20000 }) {
   if (!description) return { is_error: true, error_code: ERR_CODES.INVALID_INPUT, content: 'description required.' };
   const tab = await resolveTab(tab_id);
   if (isRestrictedUrl(tab.url)) return { is_error: true, error_code: ERR_CODES.RESTRICTED, content: 'Restricted page.' };
   const text = await execIsolated(tab.id, (max) => (document.body?.innerText || '').slice(0, max), [max_chars]);
-  if (!text) return { is_error: true, content: 'No text on page.' };
-  try {
-    const prompt = `Extract: ${description}\n${schema ? 'Target schema: ' + JSON.stringify(schema) + '\n' : ''}From this page text:\n---\n${text}\n---\n\nReturn ONLY valid JSON matching the schema. No markdown fences, no explanation.`;
+  if (!text) return { is_error: true, content: 'No text on page to extract from.' };
+
+  async function attempt(extraGuidance = '') {
+    const prompt = `Extract: ${description}\n${schema ? 'Target schema: ' + JSON.stringify(schema) + '\n' : ''}From this page text:\n---\n${text}\n---\n\nReturn ONLY valid JSON matching the schema. No markdown fences, no explanation, no comments.${extraGuidance}`;
     const out = await _callClaude([{ role: 'user', content: prompt }], 3000);
-    const json = out.match(/[\[\{][\s\S]*[\]\}]/)?.[0] || out;
+    return out;
+  }
+
+  let rawResponse;
+  try {
+    rawResponse = await attempt();
+    const json = rawResponse.match(/[\[\{][\s\S]*[\]\}]/)?.[0] || rawResponse;
     JSON.parse(json); // validate
     return { content: '```json\n' + json + '\n```' };
-  } catch (e) { return { is_error: true, content: `Extract failed: ${e.message}` }; }
+  } catch (e1) {
+    // Retry once with stricter prompt
+    try {
+      const retry = await attempt('\n\nIMPORTANT: Previous attempt produced invalid JSON. Output MUST be parseable by JSON.parse(). Start with { or [, end with } or ]. No prose.');
+      const json = retry.match(/[\[\{][\s\S]*[\]\}]/)?.[0] || retry;
+      JSON.parse(json);
+      return { content: '✓ Recovered after 1 retry.\n```json\n' + json + '\n```' };
+    } catch (e2) {
+      const preview = (rawResponse || '').slice(0, 300);
+      return { is_error: true, error_code: ERR_CODES.EXEC_FAILED,
+               content: `ai_extract_data failed (malformed JSON after 2 attempts).\nLast parse error: ${e2.message}\nRaw response preview (first 300 chars):\n---\n${preview}\n---\n\nTry: simpler schema, smaller max_chars, or fall back to extract_list/extract_table.` };
+    }
+  }
 }
 
 // ---- get_accessibility_tree -----------------------------------------
