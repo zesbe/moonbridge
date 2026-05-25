@@ -1,56 +1,83 @@
 # MoonBridge
 
-> Chrome extension AI agent for any Anthropic-compatible endpoint, with optional MCP bridge to Claude Code CLI.
+> Smart browser automation agent for Chrome. 159 tools, 3-mantra doctrine (LOOK FIRST, ASK IF UNSURE, VERIFY DONE), Claude-style sidepanel.
 
-MoonBridge gives you a Claude-style sidepanel inside Chrome that can **read, click, navigate, screenshot, and reason about any tab** — backed by your own Anthropic-compatible endpoint. Pair it with the MCP bridge and Claude Code CLI gets the same browser superpowers from your terminal.
+MoonBridge is a Chrome extension that turns any Anthropic-compatible endpoint into a browser automation agent — read tabs, click buttons, fill forms, verify state, iframe-aware, vision fallback. It's not just "a Claude wrapper" — it's a smart agent with explicit doctrine, self-healing selectors, parallel task execution, and a memory loop that gets better with use.
 
 ```
-┌──────────────────┐                                    ┌──────────────────┐
-│  Sidepanel UI    │                                    │  Any web page    │
-│  (Claude-style)  │  ◄── 83 browser tools ──►          │  (read, click,   │
-│                  │                                    │   screenshot…)   │
-└────────┬─────────┘                                    └──────────────────┘
-         │
-         │  Anthropic Messages API (your endpoint)
-         ▼
-┌──────────────────┐
-│  Your endpoint   │   e.g. https://your-proxy.example/v1
-│  (claude.ai,     │
-│   bedrock,       │
-│   custom proxy)  │
-└──────────────────┘
+┌───────────────────────────────┐                ┌──────────────────┐
+│  MoonBridge sidepanel         │   159 tools    │  Any web page    │
+│  • Live agent timeline        │ ◄─────────────►│  (read, click,   │
+│  • Streaming caret            │                │   navigate,      │
+│  • Inline screenshot preview  │                │   screenshot…)   │
+└─────────────┬─────────────────┘                └──────────────────┘
+              │
+              │  Anthropic Messages API
+              ▼
+   ┌──────────────────────────┐
+   │  Your endpoint           │  Anthropic / Bedrock / proxy / LiteLLM
+   │  (any /messages adapter) │
+   └──────────────────────────┘
 
-         ┌──────────────────────── optional ────────────────────────┐
-         │                                                          │
-┌────────▼─────────┐    stdio MCP    ┌──────────────────┐  WS  ┌────▼──────────┐
-│ Claude Code CLI  │ ◄─────────────► │   MCP bridge     │ ◄──► │  MoonBridge   │
-│ (terminal)       │                 │  (Node, stdio)   │ :9777│  Chrome ext   │
-└──────────────────┘                 └──────────────────┘      └───────────────┘
+   ┌────────────── optional Claude Code CLI bridge ──────────────┐
+   │                                                              │
+   │  Claude Code CLI ──stdio─► moonbridge-bridge ──WS─► extension│
+   │                                                              │
+   └──────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+## What makes it smart
 
-- **Sidepanel chat** — Pinned to the active tab, like Claude's official extension.
-- **83 browser tools** — Read DOM, click, type, scroll, screenshot, navigate, multi-tab/window control, network capture, file download, clipboard, cookies.
-- **3-layer CSP bypass** — isolated world → MAIN world → CDP `Runtime.evaluate` with `allowUnsafeEvalBlockedByCSP`. Works on sites that aggressively block content scripts.
-- **Hybrid DOM + Vision** — DOM-first for speed, vision fallback for tricky layouts.
-- **Activity timeline** — Live tool execution stream like Claude Computer Use / Cursor / Devin.
-- **Premium UI** — Charcoal theme, glassmorphism, syntax highlighting, message bubbles, date-grouped history, 6 message actions (copy, regenerate, branch, speak, like, dislike).
-- **Memory & knowledge base** — Persistent notes, KB search, scratchpad, scheduled tasks.
-- **Prompt caching** — Rolling cache breakpoint to reduce input tokens on long conversations.
-- **Parallel tool execution** — Read-only tools run concurrently for speed.
-- **MCP bridge** — Expose all 83 tools to Claude Code CLI via stdio MCP.
-- **Custom endpoint** — Plug in your own Anthropic-compatible proxy or self-hosted gateway.
+**3-Mantra Doctrine** baked into the system prompt:
+
+1. **LOOK FIRST, THEN ACT** — Run `get_page` before any click/type to verify the element exists and the page is in the expected state. No blind clicks.
+2. **ASK IF UNSURE** — STOP and ask the user when blocked: login required, captcha detected, ambiguous instruction, destructive action, multiple matches.
+3. **VERIFY DONE BEFORE DECLARING SUCCESS** — Don't say "selesai" until verified via `get_page` / `media_state` / `wait_for_toast`. No fake success.
+
+**Power tools** that change what the agent can do:
+
+- `parallel_task` — Read 5 tabs concurrently. Cuts latency from `sum` to `max`.
+- `execute_plan` — Multi-step workflow with intermediate result passing via `${steps[N].content}`.
+- `iframe_query` — Operate inside iframes via Chrome scripting frameIds (Oracle Console, GSC, embedded payments).
+- `vision_query` — Last-resort visual reasoning when DOM is empty (canvas, charts).
+- `media_state` — Read `<video>`/`<audio>` state without execute_js (Trusted Types-safe).
+- `wait_for_idle dom_stable_ms=N` — SPA-aware settle (DOM + network).
+- `wait_for_toast` — Detect Material/Antd/Radix toast patterns to confirm submit success.
+- `dismiss_modal` — Auto-close cookie banners (OneTrust, TrustE, common patterns).
+- `find_element`, `smart_click`, `smart_type` — Fuzzy semantic matching.
+
+**Self-healing selectors.** When `#ref-N` becomes stale after rerender, falls back to label/aria-label/role match instead of failing.
+
+**Auto task_context.** Every turn, the system prompt is auto-injected with current tab IDs, active tab, audible flag — agent stays oriented across multi-turn workflows.
+
+**Memory discipline.** Agent is taught to actively call `remember` for durable facts (account names, regions, properties) at task end. Memories auto-recall on subsequent sessions.
+
+**Trusted Types-aware.** When `execute_js` is blocked by `require-trusted-types-for 'script'` (YouTube, Google, banking), falls back through 3 layers: ISOLATED → MAIN (with TT policy) → CDP `Runtime.evaluate` with `allowUnsafeEvalBlockedByCSP: true`.
+
+**Click error semantics.** `click()` returns `error_kind`: `NOT_FOUND` / `NOT_VISIBLE` / `DISABLED` / `COVERED` (with `covered_by` selector) so agent picks the right recovery — close modal vs find new selector vs wait for enable.
+
+## UI features
+
+- **Hybrid Cursor + Live Ticker timeline** — One persistent batch per turn with `↻` iteration separators. Auto-collapses to mini chips on next turn. Live streaming animations (slide-in, flash, spin, success-pop).
+- **Streaming caret + lifecycle states** — Assistant message goes through `creating → streaming → finalizing → completed`. Blinking ▍ caret while live, fades out on done.
+- **Inline screenshot preview** — Screenshot tool result renders directly under the activity row. Compact thumbnail when completed, full size while running. Click to zoom.
+- **Glassmorphism chat bubbles** — User pill (gradient + blur), assistant accent bar (no card, full-width prose).
+- **Slash commands** — `/dump-trace`, `/clear-trace`, `/storage`, `/debug-on/-off`, `/help`. Run locally, no token spend.
+- **Hot reload dev workflow** — `node scripts/dev-watch.js` + dev-mode SW WS client = ~1s edit-to-reload loop.
+- **Tracelog ring buffer** — IDB-backed 1000-entry log of every tool execution. `/dump-trace 50` copies last 50 to clipboard for bug reports.
 
 ## Repo layout
 
 ```
 moonbridge/
-├── custom-ext/         # The Chrome extension (load this folder unpacked)
+├── custom-ext/         # Chrome extension (load this folder unpacked)
 │   ├── manifest.json
 │   ├── sidepanel.{html,css,js}
 │   ├── service-worker.js
-│   ├── lib/            # tools.js (all 83 tools), agent.js, markdown, highlight, …
+│   ├── tsconfig.json   # gradual TS via @ts-check, no bundler
+│   ├── scripts/
+│   │   └── dev-watch.js  # hot reload WS server
+│   ├── lib/            # tools.js (159 tools), agent.js, storage, memory, kb, …
 │   ├── content/
 │   ├── icons/
 │   └── options.{html,css,js}
@@ -58,13 +85,13 @@ moonbridge/
 └── mcp-bridge/         # Optional MCP bridge for Claude Code CLI
     ├── bin/moonbridge-bridge.js
     ├── src/server.js
-    ├── src/tools.json  # auto-extracted tool schema
+    ├── src/tools.json  # tool schema mirror (159)
     └── README.md
 ```
 
 ## Quick start
 
-### 1. Install the Chrome extension
+### 1. Install the extension
 
 ```bash
 git clone https://github.com/zesbe/moonbridge.git
@@ -81,7 +108,7 @@ In Chrome:
 
 ### 2. Configure your endpoint
 
-Click the MoonBridge icon → opens sidepanel → settings (gear icon).
+Click the MoonBridge icon → opens sidepanel → Settings (overflow menu → ⚙).
 
 ```
 Base URL:    https://your-proxy.example/v1
@@ -92,9 +119,9 @@ Model:       claude-sonnet-4-5  (or whatever your proxy serves)
 Any endpoint that speaks the Anthropic Messages API works:
 
 - The official Anthropic API
-- AWS Bedrock (via a proxy that translates the wire format)
-- Your own self-hosted gateway
-- LiteLLM, OpenRouter, etc.
+- AWS Bedrock (via translation proxy)
+- LiteLLM, OpenRouter, custom gateways
+- Self-hosted Ollama with Anthropic adapter
 
 ### 3. (Optional) Connect Claude Code CLI
 
@@ -107,41 +134,52 @@ npm link
 claude mcp add moonbridge --transport stdio moonbridge-bridge
 ```
 
-Then in the MoonBridge sidepanel, click the **bridge dot** in the top bar — it turns green when Claude Code connects. From your terminal:
+Then in MoonBridge, click the **bridge dot** in the topbar — turns green when Claude Code connects. From terminal:
 
 ```
 $ claude
-> What tabs do I have open?
-🔧 moonbridge:list_tabs
-✅ 5 tabs: …
-
-> Click the merge button on the GitHub PR tab
-🔧 moonbridge:click(selector="button[data-testid=merge]")
-✅ Clicked. URL is now: …
+> Cek free tier di Oracle Cloud, AWS, dan GCP parallel
+🔧 moonbridge:parallel_task
+🔧 moonbridge:read_tab × 3 (concurrent)
+✅ Oracle: 2 AMD VMs active, 4 ARM Ampere active
+   AWS:    EC2 t2.micro 750h remaining, RDS expires 2027-Jan
+   GCP:    e2-micro free, Cloud Storage 5GB free
 ```
 
 See [`mcp-bridge/README.md`](mcp-bridge/README.md) for details.
 
-## How it works
+## How the agent works
 
-### Tool execution layers
+### Doctrine-driven loop
 
-When the agent calls `execute_js` (or any tool that runs code in a page), MoonBridge tries 3 layers in order:
+```
+User prompt
+  ↓
+Auto-inject task_context (tabs, active, audible)
+  ↓
+runAgent unbounded loop:
+  for each iteration:
+    ├─ Stream from endpoint
+    ├─ <thinking> block (forced) → plan in MoonBridge ticker
+    ├─ Parse tool_use blocks
+    ├─ Read-only tools → Promise.all (parallel)
+    ├─ Mutating tools → sequential
+    ├─ Append tool_result, loop
+    └─ End when:
+       - Model emits text without tool calls
+       - User cancels
+       - Agent calls "ASK" pattern (text only, no tool)
+```
 
-1. **Isolated world** — `chrome.scripting.executeScript({ world: "ISOLATED" })`. Fast, safe, but can't access page-defined globals.
-2. **MAIN world** — `world: "MAIN"`. Sees page globals, but blocked by strict CSP.
-3. **Debugger CDP** — `chrome.debugger.attach()` + `Runtime.evaluate` with `allowUnsafeEvalBlockedByCSP: true`. Bypasses CSP entirely.
+### Tool execution layers (CSP bypass)
 
-Most tools complete on layer 1. Layer 3 only fires for sites with hostile CSPs (banking, gov sites).
+When `execute_js` runs:
 
-### Agent loop
+1. **Isolated world** — Extension's own JS sandbox, immune to page CSP
+2. **MAIN world** — Page context, registers TrustedTypes policy `mb-eval` for `new Function`
+3. **Debugger CDP** — `chrome.debugger.attach` + `Runtime.evaluate` with `allowUnsafeEvalBlockedByCSP: true`. Last resort, attaches debug bar.
 
-The agent runs unbounded iterations (no `maxIterations` cap) — it stops only when the model emits text without tool calls, or you hit cancel. Each iteration:
-
-1. Send messages + tool results to the endpoint with prompt caching.
-2. Stream the response, parse `tool_use` blocks.
-3. Execute read-only tools in parallel (`Promise.all`), serial for state-changing ones.
-4. Append `tool_result` blocks. Loop.
+Most tools complete on layer 1. Layer 3 only fires for hostile CSPs.
 
 ### MCP bridge architecture
 
@@ -157,21 +195,19 @@ Claude Code CLI ──stdio──► moonbridge-bridge (per-session)
                            MoonBridge sidepanel
 ```
 
-The daemon stays alive across CLI sessions — solves the "stuck yellow" connection state when the bridge starts before the extension is open.
+The daemon survives across CLI sessions — solves "stuck yellow" connection state when bridge starts before extension is open.
 
 ## Configuration
 
-### Settings (per-extension)
-
-Stored via `chrome.storage.sync`. Open with the gear icon in the sidepanel.
+### Settings (per-extension, `chrome.storage.local`)
 
 | Field | Default | Notes |
 |---|---|---|
 | Base URL | — | Anthropic-compatible `/v1` endpoint |
 | API key | — | Sent as `x-api-key` header |
 | Model | `claude-sonnet-4-5` | Any model your endpoint serves |
-| Mode | Balanced | Fast / Balanced / Quality (affects max_tokens, temperature, tool batching) |
-| System prompt | (built-in) | Optional override |
+| Speed preset | Balanced | Fast / Balanced / Quality (affects max_tokens, temperature) |
+| System prompt | (built-in) | Optional override (prepended to MoonBridge doctrine) |
 
 ### Bridge port
 
@@ -183,39 +219,69 @@ MOONBRIDGE_PORT=12345 moonbridge-bridge
 
 Then update the extension's bridge URL in the same settings panel.
 
+### Approval modes (Tools drawer → ⋯ → Tools & Approval)
+
+- **Never** — Fully autonomous, no confirmations
+- **Destructive only** (default) — Confirm only on write/delete/transfer-style actions
+- **Always** — Manual confirmation per tool call
+
 ## Troubleshooting
 
+**`execute_js` fails on YouTube/Google with "Trusted Type" error**
+Already auto-handled in v1.6.2+ via 3-layer fallback. If it still fails, the site is using `require-trusted-types-for 'script'` with strict allow-list — agent will get an error message it can react to.
+
+**Agent claims "selesai" without verifying**
+This shouldn't happen in v2.0+ thanks to the 3-mantra doctrine. If it does, check that your custom system prompt isn't overriding the doctrine. The doctrine is appended automatically, but a long custom prompt may get cached.
+
 **Sidepanel shows "endpoint error"**
-Check the base URL ends with `/v1` (no trailing slash). Test with `curl -H "x-api-key: $KEY" $URL/messages -d '{"model":"…","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'`.
+Test with: `curl -H "x-api-key: $KEY" $URL/messages -d '{"model":"…","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'`. Base URL must include `/v1` (no trailing slash).
 
-**`element_screenshot` returns wrong region**
-This was a known bug — viewport was read from sidepanel (~400px) instead of tab. Fixed in v1.1.0. Reload the extension.
+**Timeline animations stop after first turn**
+Already fixed in v1.7.6 + v1.7.9 (force fresh batch + ghost streaming cleanup). Reload extension.
 
-**`clipboard_write` says "Document is not focused"**
-Triple fallback runs automatically: sidepanel `window.focus()` → inject into active tab → legacy `execCommand('copy')` via hidden textarea. If all 3 fail, the page has an aggressive focus trap — use `execute_js` to write directly.
+**Inline screenshot ga muncul di chat 2+**
+Already fixed in v1.7.11. Reload.
 
 **Bridge dot stays yellow**
-1. Check the daemon is running: `lsof -i :9777`
-2. Check the extension's bridge URL matches the daemon port.
-3. Restart Chrome (the SW caches old socket state).
+1. Check daemon: `lsof -i :9777`
+2. Check extension's bridge URL matches daemon port
+3. Restart Chrome (SW caches old socket state)
 
-**`list_tabs` returns "clean — nothing to commit"**
-That's a hallucination from the model, not MoonBridge. Each `list_tabs` response includes a unique `[sig=xxx-yyy]` signature — if you don't see it in the response, the model never actually called the tool. Re-prompt explicitly: "call list_tabs and quote the sig".
+**`list_tabs` returns hallucinated content**
+Each `list_tabs` response includes a unique `[sig=xxx-yyy]` signature. If you don't see it, the model never actually called the tool. Re-prompt: "call list_tabs and quote the sig".
 
 ## Development
 
 ```bash
-# Reload extension after editing custom-ext/:
-# chrome://extensions → MoonBridge → reload icon
+# Edit code in custom-ext/ → manual reload at chrome://extensions
+# OR set up hot reload:
+cd custom-ext
+node scripts/dev-watch.js   # WS server on :9012
 
-# Watch the service worker logs:
-# chrome://extensions → MoonBridge → "service worker" link
+# Add "version_name": "2.2.0-dev" to manifest.json (gates the WS client in SW)
 
-# Watch the sidepanel logs:
-# Right-click in sidepanel → Inspect
+# Service worker logs: chrome://extensions → MoonBridge → "service worker"
+# Sidepanel logs:      Right-click in sidepanel → Inspect
+# Bridge logs:         ~/.claude/logs/mcp-moonbridge.log
 
-# Bridge logs (when running via Claude Code):
-~/.claude/logs/mcp-moonbridge.log
+# Slash commands in chat:
+/dump-trace 100   # last 100 tool executions to clipboard
+/storage          # current chrome.storage usage
+/debug-on         # verbose logger
+```
+
+### Contributing
+
+Tool registry parity is enforced — `mcp-bridge/src/tools.json` must match the `case '...'` switch in `custom-ext/lib/tools.js`. The repo has a check script that runs:
+
+```bash
+node -e "
+  const fs = require('fs');
+  const tools = JSON.parse(fs.readFileSync('mcp-bridge/src/tools.json', 'utf8'));
+  const tjs = fs.readFileSync('custom-ext/lib/tools.js', 'utf8');
+  const cases = [...tjs.matchAll(/case ['\"]([a-z0-9_]+)['\"]:/g)].map(m => m[1]);
+  // ... validates count + names
+"
 ```
 
 ## License
@@ -228,4 +294,4 @@ Built by [@zesbe](https://github.com/zesbe). Inspired by Claude's official Chrom
 
 ---
 
-**Status:** v1.1.0 — actively developed. Issues and PRs welcome.
+**Status:** v2.2.0 — agent-only, smart-agent doctrine, 159 tools. Production-ready for browser automation tasks.
