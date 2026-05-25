@@ -27,7 +27,7 @@ claude mcp add moonbridge --transport stdio moonbridge-bridge
 1. Open Chrome and the MoonBridge sidepanel.
 2. Click the small dot button in the top bar — it turns yellow (connecting),
    then green when the bridge picks up your session.
-3. In any terminal: `claude` — every MoonBridge tool (38+) is now available.
+3. In any terminal: `claude` — every MoonBridge tool (159) is now available.
 
 ## Examples
 
