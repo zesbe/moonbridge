@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoonBridge",
-  "version": "2.2.3",
-  "description": "Smart browser automation agent — 159 tools, hide thinking tags from message body, rich timeline animations, smart agent doctrine",
+  "version": "2.2.4",
+  "description": "Smart browser automation agent — 159 tools, mid-stream truncation handling, max_tokens 16384, hide thinking tags, rich timeline animations",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",

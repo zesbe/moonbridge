@@ -402,12 +402,25 @@ export async function* runAgent({
     }
     if (assistantContent.length === 0) {
       yield { kind: 'turn_end', stop_reason: stopReason || 'empty' };
+      // Surface a clear error if the model returned NOTHING — likely API
+      // truncation, network issue, or context overflow. User otherwise sees
+      // silent halt mid-conversation.
+      yield { kind: 'error', message: stopReason === 'max_tokens'
+        ? 'Response was cut off (max_tokens hit). Try a simpler request or increase maxTokens in settings.'
+        : `Empty response from API (stop_reason: ${stopReason || 'unknown'}). Check API key, network, or try again.` };
       return;
     }
     conversation.push({ role: 'assistant', content: assistantContent });
 
     yield { kind: 'turn_end', stop_reason: stopReason };
-    if (stopReason !== 'tool_use') return;
+    if (stopReason !== 'tool_use') {
+      // If the model hit max_tokens mid-response, surface it so user knows
+      // the answer was truncated (otherwise looks like AI died randomly).
+      if (stopReason === 'max_tokens') {
+        yield { kind: 'error', message: 'Response truncated (max_tokens hit). Continue by asking "lanjutkan" or increase maxTokens.' };
+      }
+      return;
+    }
 
     const toolResultBlocks = [];
 

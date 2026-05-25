@@ -29,7 +29,7 @@ export async function* streamRich({
 
   const body = {
     model,
-    max_tokens: maxTokens || 4096,
+    max_tokens: maxTokens || 16384,
     messages,
     stream: true,
   };

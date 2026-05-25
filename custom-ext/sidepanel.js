@@ -130,7 +130,7 @@ async function loadSettings() {
     defaultModel: 'kr/claude-sonnet-4.5',
     systemPrompt: '',
     temperature: 1.0,
-    maxTokens: 4096,
+    maxTokens: 16384,
     cacheTtl: '5m',
   };
   if (!settings.cacheTtl) settings.cacheTtl = '5m';
