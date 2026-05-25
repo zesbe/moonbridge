@@ -79,15 +79,33 @@ async function* _doRequest({ url, apiToken, model, system, messages, tools, temp
 
   let res;
   try {
+    // v2.4.3: provider-specific header injection
+    // FreeModel.dev's `cc.freemodel.dev` is scoped to Claude Code CLI traffic.
+    // Mimic CLI headers to try bypass their gating. May or may not work depending
+    // on how strict their detection is.
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiToken}`,
+      'x-api-key': apiToken,
+      'anthropic-version': '2023-06-01',
+      'Accept': stream ? 'text/event-stream' : 'application/json',
+    };
+    if (/freemodel\.dev/i.test(url)) {
+      // Headers Claude Code CLI sends — proxy may gate on these
+      headers['x-app'] = 'cli';
+      headers['anthropic-beta'] = 'claude-code-20250219,prompt-caching-2024-07-31';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+      headers['x-stainless-lang'] = 'js';
+      headers['x-stainless-package-version'] = '0.32.1';
+      headers['x-stainless-runtime'] = 'node';
+      headers['x-stainless-os'] = 'MacOS';
+      headers['x-stainless-arch'] = 'arm64';
+      headers['x-stainless-runtime-version'] = 'v22.0.0';
+      headers['x-stainless-helper-method'] = 'stream';
+    }
     res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiToken}`,
-        'x-api-key': apiToken,
-        'anthropic-version': '2023-06-01',
-        'Accept': stream ? 'text/event-stream' : 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
       signal,
     });

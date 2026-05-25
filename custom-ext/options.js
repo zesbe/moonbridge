@@ -22,7 +22,7 @@ const status = $('status');
 // Provider presets — Base URL, common models, expected token format
 const PROVIDERS = {
   freemodel: {
-    name: 'FreeModel.dev',
+    name: 'FreeModel.dev (Claude Code CLI only ⚠)',
     baseUrl: 'https://cc.freemodel.dev/v1',
     models: [
       'claude-opus-4-7',
@@ -33,6 +33,7 @@ const PROVIDERS = {
     defaultModel: 'claude-sonnet-4-6',
     tokenFormat: 'fe_oa_...',
     keyHelpUrl: 'https://freemodel.dev',
+    warning: 'FreeModel.dev cc.freemodel.dev is scoped to Claude Code CLI traffic and may reject browser requests with "Please use Claude Code CLI". MoonBridge tries to mimic CLI headers but they may still gate on TLS fingerprint. If rejected, use OpenRouter or 9Router instead.',
   },
   '9router': {
     name: '9Router',
@@ -296,14 +297,18 @@ async function testConnection() {
     }
     if (gotText) {
       const usageStr = usage ? ` · usage: in=${usage.input_tokens}, out=${usage.output_tokens}` : '';
+      // v2.4.3: detect "Please use Claude Code CLI" reject pattern
+      // FreeModel.dev sometimes returns 200 OK with reject text in body
+      const lastEvents = []; // (we already streamed, can't re-read; rely on getStatus pattern)
       setStatus(`✓ Connection works. Model "${model}" responded${usageStr}.`, 'ok');
     } else if (gotThinking) {
-      // v2.4.1: distinguish "thinking-only" from "no response" — much better diagnostic
       setStatus(`✓ Connection works (thinking mode). Model "${model}" produced reasoning but no final text in 256 tokens (extended thinking consumes lots). The endpoint is healthy — full conversations will work fine.`, 'ok');
     } else if (stopReason === 'max_tokens') {
       setStatus(`⚠ Connection works but model hit max_tokens (256) before responding. Model "${model}" may need extended thinking budget. Endpoint is healthy.`, 'ok');
     } else {
-      setStatus(`Connected but model "${model}" returned nothing (stop_reason=${stopReason || 'unknown'}). Try a different model or check Base URL.`, 'err');
+      const presetWarn = PROVIDERS[providerPreset.value]?.warning;
+      const warnMsg = presetWarn ? `\n\n⚠ ${presetWarn}` : '';
+      setStatus(`Connected but model "${model}" returned nothing (stop_reason=${stopReason || 'unknown'}). Try a different model or check Base URL.${warnMsg}`, 'err');
     }
   } catch (e) {
     setStatus(`✕ Error: ${e.message}`, 'err');
